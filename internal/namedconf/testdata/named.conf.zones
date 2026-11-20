@@ -1,0 +1,1 @@
+zone "included.example.com" { type master; file "included.example.com.db"; masterfile-format raw; journal "/var/named/journals/inc.jnl"; };

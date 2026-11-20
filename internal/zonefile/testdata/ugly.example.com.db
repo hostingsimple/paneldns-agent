@@ -1,0 +1,31 @@
+; Hand-edited zone in the style real panels and people write.
+$TTL 1h   ; default TTL with a unit
+$ORIGIN example.com.
+@	IN	SOA	ns1.example.com. hostmaster.example.com. (
+		2026112001 ; serial
+		3600       ; refresh
+		15m        ; retry, with a unit
+		1W         ; expire, upper-case unit
+		300 )      ; minimum
+		IN	NS	ns1
+		IN	NS	ns2.example.net.
+@ 300 IN MX 10 mail
+@ IN 300 MX 20 mail2.example.net.   ; class before TTL
+www		CNAME	@
+mail	IN	A	192.0.2.10
+mail	IN	AAAA	2001:DB8:0:0::10
+	IN	TXT	"indented: owner is mail"
+txt	IN	TXT	( "v=spf1 ip4:192.0.2.0/24"
+		  " -all" )
+quote	IN	TXT	"say \"hi\"; not a comment" "\\backslash" "tab\009x"
+unq	IN	TXT	unquoted\ word
+_sip._tcp	IN	SRV	0 5 5060 sip
+sub	3600	IN	NS	ns1.sub
+ns1.sub	IN	A	192.0.2.53
+$ORIGIN sub2.example.com.
+host	IN	A	192.0.2.20
+$INCLUDE inc/extra.db
+$INCLUDE inc/other-origin.db other.example.com.
+after	IN	A	192.0.2.21
+*	IN	A	192.0.2.99
+caa	IN	CAA	0 issue "letsencrypt.example"

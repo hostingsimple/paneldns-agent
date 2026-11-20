@@ -1,0 +1,4 @@
+; included with the current origin (sub2.example.com.)
+inc1	IN	A	192.0.2.30
+$ORIGIN deep.example.com.
+inc2	IN	A	192.0.2.31

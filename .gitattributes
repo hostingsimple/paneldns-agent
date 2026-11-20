@@ -1,2 +1,5 @@
 * text=auto eol=lf
 *.gz binary
+# Fixtures whose exact bytes matter: never convert line endings.
+internal/zonefile/testdata/crlf.* -text
+testdata/** -text

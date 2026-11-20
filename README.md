@@ -24,6 +24,22 @@ and compare the result with the published packages.
    inventory of names and content hashes.
 3. `paneldns-agent --check` is a read-only self-test for support.
 
+## What it reads
+
+- **BIND** (`ZONE_SOURCE=bind`): named.conf and its includes, one view (`VIEW`, else `_default`,
+  else `external`, else the first view matching any client), every `type primary`/`master` zone
+  with a `file`. Each changed zone is read with `named-compilezone` (journal applied, `$INCLUDE`
+  and `$GENERATE` expanded, the zone's own `check-names` and integrity options), or with the
+  built-in parser when `named-compilezone` isn't installed.
+- **PowerDNS** (`ZONE_SOURCE=powerdns-api`): the local HTTP API on a loopback address, zone list
+  and `/export`. Only Native and Master zones.
+- System zones (`localhost`, loopback and RFC 1918 reverse zones and the like) are never sent.
+  DNSSEC records (RRSIG, NSEC, NSEC3, NSEC3PARAM, DNSKEY, CDS, CDNSKEY) and private types
+  (TYPE65280–TYPE65534) are stripped; a zone that had DNSKEY or RRSIG records is reported as
+  signed at the source.
+
+Design choices are recorded in [`docs/DECISIONS.md`](docs/DECISIONS.md).
+
 ## Configuration
 
 `/etc/paneldns-agent.conf`; see [`packaging/paneldns-agent.conf`](packaging/paneldns-agent.conf)
@@ -62,6 +78,10 @@ code to audit in a program that root installs on every hosting server.
 |---|---|
 | `cmd/paneldns-agent/` | The command |
 | `internal/config/` | `/etc/paneldns-agent.conf` reader and writer |
+| `internal/namedconf/` | named.conf parser: includes, views, primary zones and their options |
+| `internal/zonefile/` | RFC 1035 zone-file parser and the DNSSEC/private-type strip list |
+| `internal/source/` | Zone sources: BIND (named.conf + `named-compilezone`) and the PowerDNS local API |
+| `internal/filter/` | System zones and `EXCLUDE` patterns |
 | `internal/version/` | Version string, set at build time |
 | `packaging/` | Sample config (and, later, the systemd unit) |
 | `docs/` | Protocol and design decisions |
