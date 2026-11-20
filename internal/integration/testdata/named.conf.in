@@ -33,7 +33,9 @@ zone "signed.example.net" {
 	file "signed.example.net.db";
 	dnssec-policy default;
 	inline-signing no;
-	allow-update { none; };
+	// BIND 9.20: dnssec-policy without inline-signing needs dynamic DNS; "allow-update { none; }"
+	// does not count (kb.isc.org dnssec-policy-requires-dynamic-dns-or-inline-signing).
+	update-policy local;
 };
 
 zone "secondary.example.net" {
