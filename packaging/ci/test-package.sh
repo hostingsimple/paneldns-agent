@@ -17,12 +17,14 @@ case "$kind" in
 		install() { dpkg -i "$pkg"; }
 		reinstall() { dpkg -i "$pkg"; }
 		remove() { dpkg -r paneldns-agent; }
+		contents() { dpkg-deb -c "$pkg"; }
 		;;
 	rpm)
 		pkg="$(ls "$dist"/paneldns-agent-*."$arch".rpm | head -n 1)"
 		install() { rpm -i "$pkg"; }
 		reinstall() { rpm -U --replacepkgs "$pkg"; }
 		remove() { rpm -e paneldns-agent; }
+		contents() { rpm -qlp "$pkg"; }
 		;;
 	*) fail "kind must be deb or rpm" ;;
 esac
@@ -38,7 +40,10 @@ getent group paneldns-agent >/dev/null || fail "group paneldns-agent missing"
 	|| fail "config mode/owner: $(stat -c '%a %U %G' /etc/paneldns-agent.conf)"
 [ "$(stat -c '%a %U %G' /var/lib/paneldns-agent)" = "700 paneldns-agent paneldns-agent" ] \
 	|| fail "state dir mode/owner: $(stat -c '%a %U %G' /var/lib/paneldns-agent)"
-[ -f /usr/share/doc/paneldns-agent/LICENSE ] || fail "LICENSE missing"
+# The licence ships in the package. Checked in the package's file list, not on
+# disk: Ubuntu's minimal images exclude /usr/share/doc/* via dpkg path-exclude.
+contents | grep -q '/usr/share/doc/paneldns-agent/LICENSE$' || fail "LICENSE not in package"
+contents | grep -q '/usr/share/doc/paneldns-agent/NOTICE$' || fail "NOTICE not in package"
 
 # --check runs (and fails: nothing is enrolled here).
 if /usr/bin/paneldns-agent --check > /tmp/check.txt 2>&1; then
