@@ -24,8 +24,12 @@ jobs:
       contents: read
     services:
       pdns:
-        # TODO(t044): pin by digest once the image digest has been reviewed.
-        image: powerdns/pdns-auth-49:4.9
+        # The image and version the PanelDNS app's DNS integration suite
+        # uses (docker/ci/dns-integration/run.sh), pinned by the digest of
+        # its multi-arch index. The image's startup script writes the API
+        # and webserver settings to pdns.d/_api.conf from PDNS_AUTH_API_KEY,
+        # as in the app's suite.
+        image: powerdns/pdns-auth-51:5.1.5@sha256:77ff4efdbb9ec30e9309c8a1cbed6121a67fa3be25c848bbbfa756fc75bf9a27
         env:
           PDNS_AUTH_API_KEY: test-only-key
         ports:
