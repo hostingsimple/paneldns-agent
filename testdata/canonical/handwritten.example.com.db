@@ -1,0 +1,27 @@
+; example.com as a person writes it: relative names, $TTL with units,
+; parentheses, comments, class/TTL in either order, mixed case.
+$TTL 1h
+$ORIGIN Example.COM.
+@	IN	SOA	NS1 hostmaster (
+		2026112001	; serial
+		1h		; refresh
+		15m		; retry
+		1w		; expire
+		5m )		; minimum
+	IN	NS	ns1
+	IN	NS	ns2.example.net.
+@	300 IN	MX	010 Mail
+@	IN 300	MX	20 mail2.example.net.
+mail	IN	A	192.0.2.10
+mail	IN	AAAA	2001:DB8:0:0:0:0:0:10
+www	CNAME	@
+txt	IN	TXT	( "v=spf1 ip4:192.0.2.0/24"
+		  " include:_spf.example.net -all" )
+esc	IN	TXT	"\065BC" "q\"uote" "back\\slash" "tab	x"
+caa	IN	CAA	0 ISSUE "letsencrypt.example"
+_443._tcp	IN	TLSA	3 1 1 ab12 CD34
+sub	IN	NS	ns1.sub
+ns1.sub	IN	A	192.0.2.53
+sub	IN	DS	12345 13 2 abcdef0123 456789
+_sip._tcp	IN	SRV	0 5 5060 sip
+*.wild	IN	A	192.0.2.99

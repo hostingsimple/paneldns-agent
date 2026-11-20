@@ -19,3 +19,12 @@ All notable changes to this project are listed here. The format follows
   every zone, batches of up to 100 zones or 8 MB, deletions, inventories paged at 20,000 names,
   exponential backoff with full jitter and `Retry-After`, offline behaviour that sends only the
   latest content, empty-inventory and unreadable-include guards, atomic `state.json`.
+- Enrolment and request signing (t042): `paneldns-agent enrol` with zone-source detection,
+  Ed25519 key generated on the server (PKCS #8, mode 0600), identity, epoch and state files;
+  signed requests with timestamp, nonce, epoch and sequence (sequence numbers allocated under a
+  file lock so `--check` and the service never reuse one); `/epoch` recovery, key rotation,
+  clear messages for a refused IP, a bad clock, a revoked key and a too-old agent;
+  `paneldns-agent run`. `docs/PROTOCOL.md` describes the wire protocol and lists every choice
+  made where the spec is ambiguous (P-01 to P-20).
+- Shared fixtures in `testdata/`: the Ed25519 request-signing vector and the canonical-hash
+  fixture, with `SHA256SUMS` (regenerate with `go test ./internal/fixtures -update`).

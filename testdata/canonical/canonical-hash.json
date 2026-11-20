@@ -1,0 +1,68 @@
+{
+  "comment": [
+    "Shared canonical-hash fixture for Panel Sync (docs/PROTOCOL.md section 5).",
+    "For each input file: parse with the given origin, strip DNSSEC/private types, canonicalise.",
+    "hash = \"sha256:\" + hex(SHA-256(hash_input)); hash_input is the sorted canonical lines with the SOA serial removed, each ending in \\n.",
+    "text is what the agent pushes; re-canonicalising text gives the same text and hash."
+  ],
+  "cases": [
+    {
+      "file": "handwritten.example.com.db",
+      "origin": "example.com",
+      "serial": 2026112001,
+      "signed_at_source": false,
+      "stripped_records": 0,
+      "hash": "sha256:c3e93385fab6b4bd097722d2ad208974050ddab69800667e9d844810dfee3dfc",
+      "hash_input": "*.wild.example.com. 3600 IN A 192.0.2.99\n_443._tcp.example.com. 3600 IN TLSA 3 1 1 AB12CD34\n_sip._tcp.example.com. 3600 IN SRV 0 5 5060 sip.example.com.\ncaa.example.com. 3600 IN CAA 0 issue \"letsencrypt.example\"\nesc.example.com. 3600 IN TXT \"ABC\" \"q\\\"uote\" \"back\\\\slash\" \"tab\\009x\"\nexample.com. 300 IN MX 10 mail.example.com.\nexample.com. 300 IN MX 20 mail2.example.net.\nexample.com. 3600 IN NS ns1.example.com.\nexample.com. 3600 IN NS ns2.example.net.\nexample.com. 3600 IN SOA ns1.example.com. hostmaster.example.com. 3600 900 604800 300\nmail.example.com. 3600 IN A 192.0.2.10\nmail.example.com. 3600 IN AAAA 2001:db8::10\nns1.sub.example.com. 3600 IN A 192.0.2.53\nsub.example.com. 3600 IN DS 12345 13 2 ABCDEF0123456789\nsub.example.com. 3600 IN NS ns1.sub.example.com.\ntxt.example.com. 3600 IN TXT \"v=spf1 ip4:192.0.2.0/24\" \" include:_spf.example.net -all\"\nwww.example.com. 3600 IN CNAME example.com.\n",
+      "text": "$ORIGIN example.com.\nexample.com. 3600 IN SOA ns1.example.com. hostmaster.example.com. 2026112001 3600 900 604800 300\n*.wild.example.com. 3600 IN A 192.0.2.99\n_443._tcp.example.com. 3600 IN TLSA 3 1 1 AB12CD34\n_sip._tcp.example.com. 3600 IN SRV 0 5 5060 sip.example.com.\ncaa.example.com. 3600 IN CAA 0 issue \"letsencrypt.example\"\nesc.example.com. 3600 IN TXT \"ABC\" \"q\\\"uote\" \"back\\\\slash\" \"tab\\009x\"\nexample.com. 300 IN MX 10 mail.example.com.\nexample.com. 300 IN MX 20 mail2.example.net.\nexample.com. 3600 IN NS ns1.example.com.\nexample.com. 3600 IN NS ns2.example.net.\nmail.example.com. 3600 IN A 192.0.2.10\nmail.example.com. 3600 IN AAAA 2001:db8::10\nns1.sub.example.com. 3600 IN A 192.0.2.53\nsub.example.com. 3600 IN DS 12345 13 2 ABCDEF0123456789\nsub.example.com. 3600 IN NS ns1.sub.example.com.\ntxt.example.com. 3600 IN TXT \"v=spf1 ip4:192.0.2.0/24\" \" include:_spf.example.net -all\"\nwww.example.com. 3600 IN CNAME example.com.\n"
+    },
+    {
+      "file": "compiled.example.com.db",
+      "origin": "example.com",
+      "serial": 2026112099,
+      "signed_at_source": false,
+      "stripped_records": 0,
+      "hash": "sha256:c3e93385fab6b4bd097722d2ad208974050ddab69800667e9d844810dfee3dfc",
+      "hash_input": "*.wild.example.com. 3600 IN A 192.0.2.99\n_443._tcp.example.com. 3600 IN TLSA 3 1 1 AB12CD34\n_sip._tcp.example.com. 3600 IN SRV 0 5 5060 sip.example.com.\ncaa.example.com. 3600 IN CAA 0 issue \"letsencrypt.example\"\nesc.example.com. 3600 IN TXT \"ABC\" \"q\\\"uote\" \"back\\\\slash\" \"tab\\009x\"\nexample.com. 300 IN MX 10 mail.example.com.\nexample.com. 300 IN MX 20 mail2.example.net.\nexample.com. 3600 IN NS ns1.example.com.\nexample.com. 3600 IN NS ns2.example.net.\nexample.com. 3600 IN SOA ns1.example.com. hostmaster.example.com. 3600 900 604800 300\nmail.example.com. 3600 IN A 192.0.2.10\nmail.example.com. 3600 IN AAAA 2001:db8::10\nns1.sub.example.com. 3600 IN A 192.0.2.53\nsub.example.com. 3600 IN DS 12345 13 2 ABCDEF0123456789\nsub.example.com. 3600 IN NS ns1.sub.example.com.\ntxt.example.com. 3600 IN TXT \"v=spf1 ip4:192.0.2.0/24\" \" include:_spf.example.net -all\"\nwww.example.com. 3600 IN CNAME example.com.\n",
+      "text": "$ORIGIN example.com.\nexample.com. 3600 IN SOA ns1.example.com. hostmaster.example.com. 2026112099 3600 900 604800 300\n*.wild.example.com. 3600 IN A 192.0.2.99\n_443._tcp.example.com. 3600 IN TLSA 3 1 1 AB12CD34\n_sip._tcp.example.com. 3600 IN SRV 0 5 5060 sip.example.com.\ncaa.example.com. 3600 IN CAA 0 issue \"letsencrypt.example\"\nesc.example.com. 3600 IN TXT \"ABC\" \"q\\\"uote\" \"back\\\\slash\" \"tab\\009x\"\nexample.com. 300 IN MX 10 mail.example.com.\nexample.com. 300 IN MX 20 mail2.example.net.\nexample.com. 3600 IN NS ns1.example.com.\nexample.com. 3600 IN NS ns2.example.net.\nmail.example.com. 3600 IN A 192.0.2.10\nmail.example.com. 3600 IN AAAA 2001:db8::10\nns1.sub.example.com. 3600 IN A 192.0.2.53\nsub.example.com. 3600 IN DS 12345 13 2 ABCDEF0123456789\nsub.example.com. 3600 IN NS ns1.sub.example.com.\ntxt.example.com. 3600 IN TXT \"v=spf1 ip4:192.0.2.0/24\" \" include:_spf.example.net -all\"\nwww.example.com. 3600 IN CNAME example.com.\n"
+    },
+    {
+      "file": "directadmin.example.com.db",
+      "origin": "example.com",
+      "serial": 2026112005,
+      "signed_at_source": false,
+      "stripped_records": 0,
+      "hash": "sha256:c3e93385fab6b4bd097722d2ad208974050ddab69800667e9d844810dfee3dfc",
+      "hash_input": "*.wild.example.com. 3600 IN A 192.0.2.99\n_443._tcp.example.com. 3600 IN TLSA 3 1 1 AB12CD34\n_sip._tcp.example.com. 3600 IN SRV 0 5 5060 sip.example.com.\ncaa.example.com. 3600 IN CAA 0 issue \"letsencrypt.example\"\nesc.example.com. 3600 IN TXT \"ABC\" \"q\\\"uote\" \"back\\\\slash\" \"tab\\009x\"\nexample.com. 300 IN MX 10 mail.example.com.\nexample.com. 300 IN MX 20 mail2.example.net.\nexample.com. 3600 IN NS ns1.example.com.\nexample.com. 3600 IN NS ns2.example.net.\nexample.com. 3600 IN SOA ns1.example.com. hostmaster.example.com. 3600 900 604800 300\nmail.example.com. 3600 IN A 192.0.2.10\nmail.example.com. 3600 IN AAAA 2001:db8::10\nns1.sub.example.com. 3600 IN A 192.0.2.53\nsub.example.com. 3600 IN DS 12345 13 2 ABCDEF0123456789\nsub.example.com. 3600 IN NS ns1.sub.example.com.\ntxt.example.com. 3600 IN TXT \"v=spf1 ip4:192.0.2.0/24\" \" include:_spf.example.net -all\"\nwww.example.com. 3600 IN CNAME example.com.\n",
+      "text": "$ORIGIN example.com.\nexample.com. 3600 IN SOA ns1.example.com. hostmaster.example.com. 2026112005 3600 900 604800 300\n*.wild.example.com. 3600 IN A 192.0.2.99\n_443._tcp.example.com. 3600 IN TLSA 3 1 1 AB12CD34\n_sip._tcp.example.com. 3600 IN SRV 0 5 5060 sip.example.com.\ncaa.example.com. 3600 IN CAA 0 issue \"letsencrypt.example\"\nesc.example.com. 3600 IN TXT \"ABC\" \"q\\\"uote\" \"back\\\\slash\" \"tab\\009x\"\nexample.com. 300 IN MX 10 mail.example.com.\nexample.com. 300 IN MX 20 mail2.example.net.\nexample.com. 3600 IN NS ns1.example.com.\nexample.com. 3600 IN NS ns2.example.net.\nmail.example.com. 3600 IN A 192.0.2.10\nmail.example.com. 3600 IN AAAA 2001:db8::10\nns1.sub.example.com. 3600 IN A 192.0.2.53\nsub.example.com. 3600 IN DS 12345 13 2 ABCDEF0123456789\nsub.example.com. 3600 IN NS ns1.sub.example.com.\ntxt.example.com. 3600 IN TXT \"v=spf1 ip4:192.0.2.0/24\" \" include:_spf.example.net -all\"\nwww.example.com. 3600 IN CNAME example.com.\n"
+    },
+    {
+      "file": "signed-export.example.com.db",
+      "origin": "example.com",
+      "serial": 2026112010,
+      "signed_at_source": true,
+      "stripped_records": 7,
+      "hash": "sha256:c3e93385fab6b4bd097722d2ad208974050ddab69800667e9d844810dfee3dfc",
+      "hash_input": "*.wild.example.com. 3600 IN A 192.0.2.99\n_443._tcp.example.com. 3600 IN TLSA 3 1 1 AB12CD34\n_sip._tcp.example.com. 3600 IN SRV 0 5 5060 sip.example.com.\ncaa.example.com. 3600 IN CAA 0 issue \"letsencrypt.example\"\nesc.example.com. 3600 IN TXT \"ABC\" \"q\\\"uote\" \"back\\\\slash\" \"tab\\009x\"\nexample.com. 300 IN MX 10 mail.example.com.\nexample.com. 300 IN MX 20 mail2.example.net.\nexample.com. 3600 IN NS ns1.example.com.\nexample.com. 3600 IN NS ns2.example.net.\nexample.com. 3600 IN SOA ns1.example.com. hostmaster.example.com. 3600 900 604800 300\nmail.example.com. 3600 IN A 192.0.2.10\nmail.example.com. 3600 IN AAAA 2001:db8::10\nns1.sub.example.com. 3600 IN A 192.0.2.53\nsub.example.com. 3600 IN DS 12345 13 2 ABCDEF0123456789\nsub.example.com. 3600 IN NS ns1.sub.example.com.\ntxt.example.com. 3600 IN TXT \"v=spf1 ip4:192.0.2.0/24\" \" include:_spf.example.net -all\"\nwww.example.com. 3600 IN CNAME example.com.\n",
+      "text": "$ORIGIN example.com.\nexample.com. 3600 IN SOA ns1.example.com. hostmaster.example.com. 2026112010 3600 900 604800 300\n*.wild.example.com. 3600 IN A 192.0.2.99\n_443._tcp.example.com. 3600 IN TLSA 3 1 1 AB12CD34\n_sip._tcp.example.com. 3600 IN SRV 0 5 5060 sip.example.com.\ncaa.example.com. 3600 IN CAA 0 issue \"letsencrypt.example\"\nesc.example.com. 3600 IN TXT \"ABC\" \"q\\\"uote\" \"back\\\\slash\" \"tab\\009x\"\nexample.com. 300 IN MX 10 mail.example.com.\nexample.com. 300 IN MX 20 mail2.example.net.\nexample.com. 3600 IN NS ns1.example.com.\nexample.com. 3600 IN NS ns2.example.net.\nmail.example.com. 3600 IN A 192.0.2.10\nmail.example.com. 3600 IN AAAA 2001:db8::10\nns1.sub.example.com. 3600 IN A 192.0.2.53\nsub.example.com. 3600 IN DS 12345 13 2 ABCDEF0123456789\nsub.example.com. 3600 IN NS ns1.sub.example.com.\ntxt.example.com. 3600 IN TXT \"v=spf1 ip4:192.0.2.0/24\" \" include:_spf.example.net -all\"\nwww.example.com. 3600 IN CNAME example.com.\n"
+    },
+    {
+      "file": "rules.example.net.db",
+      "origin": "example.net",
+      "serial": 7,
+      "signed_at_source": false,
+      "stripped_records": 0,
+      "hash": "sha256:26acba67e5cf6c54fe7a44be8fe2ca9776b3f34b3b9deafac9b39a178c446238",
+      "hash_input": "badaddr.example.net. 300 IN A not-an-address\ncaa.example.net. 300 IN CAA 128 tbs \"value\"\nctl\\009x.example.net. 300 IN A 192.0.2.4\ndup.example.net. 300 IN A 192.0.2.7\nesc\\.dot.example.net. 300 IN A 192.0.2.2\nexample.net. 300 IN NS ns1.example.net.\nexample.net. 300 IN SOA ns1.example.net. hostmaster.example.net. 7200 1800 1209600 3600\ngeneric.example.net. 300 IN TYPE999 \\# 3 ABCDEF\ngeneric0.example.net. 300 IN TYPE999 \\# 0\nhigh.example.net. 300 IN TXT \"caf\\195\\169\"\nhttps.example.net. 300 IN HTTPS 1 . alpn=h2,h3 ipv4hint=192.0.2.6\nloc.example.net. 300 IN LOC 52 22 23.000 N 4 53 32.000 E -2.00m 0.00m 10000m 10m\nmulti.example.net. 300 IN TXT \"one\" \"two\" \"three\"\nmx.example.net. 300 IN MX 10 mx.example.net.\nnaptr.example.net. 300 IN NAPTR 100 10 \"u\" \"E2U+sip\" \"!^.*$!sip:x@example.net!\" .\nns1.example.net. 300 IN A 192.0.2.1\nrel.example.net. 300 IN PTR host.example.net.\nrp.example.net. 300 IN RP admin.example.net. txt.example.net.\nsrvdot.example.net. 300 IN SRV 0 0 0 .\nsshfp.example.net. 300 IN SSHFP 4 2 ABCD0123\nsvc.example.net. 300 IN SVCB 0 svc.example.net.\ntypenum.example.net. 300 IN A 192.0.2.5\nunq.example.net. 300 IN TXT \"plain word\"\nupper.example.net. 300 IN CNAME target.example.net.\nuri.example.net. 300 IN URI 10 1 \"https://example.net/\"\nv6.example.net. 300 IN AAAA 2001:db8::ff00:42:8329\nwab.example.net. 300 IN A 192.0.2.3\n",
+      "text": "$ORIGIN example.net.\nexample.net. 300 IN SOA ns1.example.net. hostmaster.example.net. 7 7200 1800 1209600 3600\nbadaddr.example.net. 300 IN A not-an-address\ncaa.example.net. 300 IN CAA 128 tbs \"value\"\nctl\\009x.example.net. 300 IN A 192.0.2.4\ndup.example.net. 300 IN A 192.0.2.7\nesc\\.dot.example.net. 300 IN A 192.0.2.2\nexample.net. 300 IN NS ns1.example.net.\ngeneric.example.net. 300 IN TYPE999 \\# 3 ABCDEF\ngeneric0.example.net. 300 IN TYPE999 \\# 0\nhigh.example.net. 300 IN TXT \"caf\\195\\169\"\nhttps.example.net. 300 IN HTTPS 1 . alpn=h2,h3 ipv4hint=192.0.2.6\nloc.example.net. 300 IN LOC 52 22 23.000 N 4 53 32.000 E -2.00m 0.00m 10000m 10m\nmulti.example.net. 300 IN TXT \"one\" \"two\" \"three\"\nmx.example.net. 300 IN MX 10 mx.example.net.\nnaptr.example.net. 300 IN NAPTR 100 10 \"u\" \"E2U+sip\" \"!^.*$!sip:x@example.net!\" .\nns1.example.net. 300 IN A 192.0.2.1\nrel.example.net. 300 IN PTR host.example.net.\nrp.example.net. 300 IN RP admin.example.net. txt.example.net.\nsrvdot.example.net. 300 IN SRV 0 0 0 .\nsshfp.example.net. 300 IN SSHFP 4 2 ABCD0123\nsvc.example.net. 300 IN SVCB 0 svc.example.net.\ntypenum.example.net. 300 IN A 192.0.2.5\nunq.example.net. 300 IN TXT \"plain word\"\nupper.example.net. 300 IN CNAME target.example.net.\nuri.example.net. 300 IN URI 10 1 \"https://example.net/\"\nv6.example.net. 300 IN AAAA 2001:db8::ff00:42:8329\nwab.example.net. 300 IN A 192.0.2.3\n"
+    }
+  ],
+  "same_hash": [
+    [
+      "handwritten.example.com.db",
+      "compiled.example.com.db",
+      "directadmin.example.com.db",
+      "signed-export.example.com.db"
+    ]
+  ]
+}

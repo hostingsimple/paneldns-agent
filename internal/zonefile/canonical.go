@@ -151,6 +151,8 @@ var layout = map[string][]fieldKind{
 	"PX":    {kUint, kName, kName},
 	"CAA":   {kUint, kLower, kString},
 	"HINFO": {kString, kString},
+	"RP":    {kName, kName},
+	"MINFO": {kName, kName},
 	"URI":   {kUint, kUint, kString},
 	"DS":    {kUint, kUint, kUint, kHexTail},
 	"TLSA":  {kUint, kUint, kUint, kHexTail},

@@ -1,0 +1,99 @@
+{
+  "comment": [
+    "Shared Ed25519 request-signing vector for the PanelDNS agent ingest API.",
+    "See testdata/README.md and docs/PROTOCOL.md section 3. TEST KEY ONLY: the seed is the bytes 00..1f.",
+    "body_wire_base64 is the exact request body (gzip); the signature covers SHA-256 of those bytes, never the inflated JSON."
+  ],
+  "algorithm": "Ed25519 (RFC 8032), signature standard base64 with padding",
+  "private_key_seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "public_key_base64": "A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=",
+  "public_key_hex": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+  "cases": [
+    {
+      "name": "heartbeat",
+      "method": "POST",
+      "path": "/api/agent/v1/heartbeat",
+      "x_paneldns_key": "17.4",
+      "x_paneldns_timestamp": 1795000000,
+      "x_paneldns_nonce": "00112233445566778899aabbccddeeff",
+      "x_paneldns_epoch": 3,
+      "x_paneldns_seq": 42,
+      "body_json": "{\"agent_version\":\"1.0.0\",\"hostname\":\"web1.example.com\",\"os\":\"Debian GNU/Linux 13 (trixie)\",\"backend\":\"bind\",\"panel\":\"directadmin\",\"public_ips\":[\"192.0.2.10\",\"2001:db8::10\"],\"zone_count\":2,\"excluded_count\":0,\"signed_count\":0,\"scan_started_at\":1794999990,\"scan_completed_at\":1794999995,\"errors\":[]}",
+      "body_wire_base64": "H4sIAAAAAAAC/2SPPUsEMRRF/8pyK4UQk1HRfbVgI3ZWsgz5eKwPZ16WJKOD4n+XKbYQb3lOc+43wpG1jx9cmxQFwVtnHQzeSusaZgbhk6O3vIb5NLFNZYZBaSA8cJSgu8fnl6sn0WXd+evdRa+yCl/CIIb0zppBiKIZBqegPIGQpXLqIc+iG13iJGmUUwO9wu8H6+xg/dYwOOcpx3si73Aw+CrKYyqLdtBgwGualsz5jJxBk6P+BSno2HqonfMYOsjf7W/2284yle3XP31rwLWWulUdfn4HAIxhyegoAQAA",
+      "body_wire_sha256_hex": "76a749e50a835925d7d2505ddc5fa0b45fba3c4a805ab2f39e74702c2c428a97",
+      "signing_string": "POST\n/api/agent/v1/heartbeat\n1795000000\n00112233445566778899aabbccddeeff\n3\n42\n76a749e50a835925d7d2505ddc5fa0b45fba3c4a805ab2f39e74702c2c428a97",
+      "x_paneldns_signature": "X6BARtRMFt1LGQYJi7R+1S07y/Gz+QfQLzABGoJQN/B/8ifibMpLPFcQxFNI5GLi/JRoxdKtyhsqCQ8vd4Y2Bg=="
+    },
+    {
+      "name": "zones",
+      "method": "POST",
+      "path": "/api/agent/v1/zones",
+      "x_paneldns_key": "17.4",
+      "x_paneldns_timestamp": 1795000060,
+      "x_paneldns_nonce": "ffeeddccbbaa99887766554433221100",
+      "x_paneldns_epoch": 3,
+      "x_paneldns_seq": 43,
+      "body_json": "{\"scan_started_at\":1795000050,\"zones\":[{\"name\":\"example.com\",\"seq\":43,\"owner\":\"exampleuser\",\"hash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"serial\":2026112001,\"signed_at_source\":false,\"format\":\"rfc1035\",\"text\":\"$ORIGIN example.com.\\nexample.com. 3600 IN SOA ns1.example.com. hostmaster.example.com. 2026112001 3600 900 604800 300\\nexample.com. 3600 IN TXT \\\"v=spf1 -all\\\"\\n\"}]}",
+      "body_wire_base64": "H4sIAAAAAAAC/6SPQUvDQBSE/8oyeFzL26SJdsGDJ8mlBe1BMBKW+GIKyW7dt9Vi6X+X1kPbgyff7c0wzHw7SOt8I8nFxG+NS7DmZlYQERWk8R08C+zLDt6NDAveunE98KQNIzSEP2CnuUb48hxP9kY4QqN30sNCepcVpaV/3rEvrtwAm1FWGpMRGQ1Zvfvj8kbCJrYM27lBWKMLcTzwIHatobyARuLtQbhaPFYP1VydwUxqf/6pvCRS1Vw9Le6VFzO5MPsgaXSSOF7qp1m/+RmRKml6S6Ryoj8als9LVePzTtadUdduGGrUHvvX/c8A7MdpRpsBAAA=",
+      "body_wire_sha256_hex": "450d6a35b44d00a34ae708fed40f752c56315eeeb3bfbd1470bfdf28af5170e0",
+      "signing_string": "POST\n/api/agent/v1/zones\n1795000060\nffeeddccbbaa99887766554433221100\n3\n43\n450d6a35b44d00a34ae708fed40f752c56315eeeb3bfbd1470bfdf28af5170e0",
+      "x_paneldns_signature": "MxxCMnQnHFBhcZ0gB7iYAq75BkVcrskum31QRuxAw6YyD0gGZQA+cB3W3lnpTFwNDk5zvjxdOZZjHQrngCE3AA=="
+    },
+    {
+      "name": "epoch request after state loss (epoch 0)",
+      "method": "POST",
+      "path": "/api/agent/v1/epoch",
+      "x_paneldns_key": "17.4",
+      "x_paneldns_timestamp": 1795000120,
+      "x_paneldns_nonce": "0123456789abcdef0123456789abcdef",
+      "x_paneldns_epoch": 0,
+      "x_paneldns_seq": 1,
+      "body_json": "{}",
+      "body_wire_base64": "H4sIAAAAAAAC/6quBQwAQ7+mowIAAAA=",
+      "body_wire_sha256_hex": "b529a262c4ed9048ef8ae72d92a635929cde1747a874c83b495c949aee51e48e",
+      "signing_string": "POST\n/api/agent/v1/epoch\n1795000120\n0123456789abcdef0123456789abcdef\n0\n1\nb529a262c4ed9048ef8ae72d92a635929cde1747a874c83b495c949aee51e48e",
+      "x_paneldns_signature": "6Ixs6uTIw/wEOWtKQDE8kM9SgPmJYTvPF3Fxy2rMM8nDwbp/m1u4vKin26l2FmpxJu1tGiOvK7uCaB7+z+HACw=="
+    },
+    {
+      "name": "base URL with a path prefix",
+      "method": "POST",
+      "path": "/paneldns/api/agent/v1/inventory",
+      "x_paneldns_key": "17.4",
+      "x_paneldns_timestamp": 1795000180,
+      "x_paneldns_nonce": "fedcba9876543210fedcba9876543210",
+      "x_paneldns_epoch": 4,
+      "x_paneldns_seq": 1,
+      "body_json": "{\"inventory_id\":\"1795000170-0a0b0c0d\",\"part\":1,\"parts\":1,\"scan_started_at\":1795000170,\"scan_completed_at\":1795000175,\"zones\":[{\"name\":\"example.com\",\"hash\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\",\"excluded\":false},{\"name\":\"printer.example.net\",\"excluded\":true}]}",
+      "body_wire_base64": "H4sIAAAAAAAC/6SO38qDMAxH3+V33U/SD5ysrzKGZG2GgrbS1uEmvvtwf4Sxy+XqwDkhmdH6i/gc4rVuHQx0tS+JSFf0R0wnsuSgMHDMMPoJ6UHJsq9T5pjF1bzabfMlbeiHTr50qXALXhLMYYbnXmAgE69tYUMPhYZTA4PU8H+5M/rHgYJMthudOJgzd0kWtR0eYuuzxOL9gJf80ec4ynJc7gMA4oWsGicBAAA=",
+      "body_wire_sha256_hex": "6ac43d92e94a9dbdde5e59835442e27a7fe458e7d4adcca473072f12e1022fc1",
+      "signing_string": "POST\n/paneldns/api/agent/v1/inventory\n1795000180\nfedcba9876543210fedcba9876543210\n4\n1\n6ac43d92e94a9dbdde5e59835442e27a7fe458e7d4adcca473072f12e1022fc1",
+      "x_paneldns_signature": "GQuZVZIWEzTEs3c8Sm8XbGuS/BepsWXxo4aYufzs2KD6ZYiAhvWqUYNFO9BRRZhd1vwBgGJmG7rvlILyJOTeDw=="
+    }
+  ],
+  "negative_cases": [
+    {
+      "name": "body inflated before hashing",
+      "base_case": "zones",
+      "change": "hash SHA-256 of body_json instead of the gzip bytes",
+      "expected": "signature invalid"
+    },
+    {
+      "name": "other seq",
+      "base_case": "heartbeat",
+      "change": "x_paneldns_seq 43",
+      "expected": "signature invalid"
+    },
+    {
+      "name": "path with query",
+      "base_case": "heartbeat",
+      "change": "path /api/agent/v1/heartbeat?x=1",
+      "expected": "signature invalid"
+    },
+    {
+      "name": "lower-case method",
+      "base_case": "heartbeat",
+      "change": "method post (upper-case before signing)",
+      "expected": "signature valid"
+    }
+  ]
+}

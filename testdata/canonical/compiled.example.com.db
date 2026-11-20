@@ -1,0 +1,17 @@
+example.com.			      3600 IN SOA	ns1.example.com. hostmaster.example.com. 2026112099 3600 900 604800 300
+example.com.			      3600 IN NS	ns1.example.com.
+example.com.			      3600 IN NS	ns2.example.net.
+example.com.			      300 IN MX	10 mail.example.com.
+example.com.			      300 IN MX	20 mail2.example.net.
+_443._tcp.example.com.		      3600 IN TLSA	3 1 1 AB12CD34
+_sip._tcp.example.com.		      3600 IN SRV	0 5 5060 sip.example.com.
+caa.example.com.		      3600 IN CAA	0 issue "letsencrypt.example"
+esc.example.com.		      3600 IN TXT	"ABC" "q\"uote" "back\\slash" "tab\009x"
+mail.example.com.		      3600 IN A	192.0.2.10
+mail.example.com.		      3600 IN AAAA	2001:db8::10
+sub.example.com.		      3600 IN NS	ns1.sub.example.com.
+sub.example.com.		      3600 IN DS	12345 13 2 ABCDEF0123456789
+ns1.sub.example.com.		      3600 IN A	192.0.2.53
+txt.example.com.		      3600 IN TXT	"v=spf1 ip4:192.0.2.0/24" " include:_spf.example.net -all"
+*.wild.example.com.		      3600 IN A	192.0.2.99
+www.example.com.		      3600 IN CNAME	example.com.

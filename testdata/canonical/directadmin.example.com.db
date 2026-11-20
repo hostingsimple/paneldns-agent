@@ -1,0 +1,25 @@
+$TTL 3600
+@	IN	SOA	ns1.example.com.	hostmaster.example.com.	(
+						2026112005
+						3600
+						900
+						604800
+						300 )
+
+example.com.	3600	IN	NS	ns1.example.com.
+example.com.	3600	IN	NS	ns2.example.net.
+
+example.com.	300	IN	MX	10 mail
+example.com.	300	IN	MX	20 mail2.example.net.
+mail	3600	IN	A	192.0.2.10
+mail	3600	IN	AAAA	2001:db8::10
+www	3600	IN	CNAME	example.com.
+txt	3600	IN	TXT	"v=spf1 ip4:192.0.2.0/24" " include:_spf.example.net -all"
+esc	3600	IN	TXT	"ABC" "q\"uote" "back\\slash" "tab\009x"
+caa	3600	IN	CAA	0 issue "letsencrypt.example"
+_443._tcp	3600	IN	TLSA	3 1 1 AB12CD34
+sub	3600	IN	NS	ns1.sub
+ns1.sub	3600	IN	A	192.0.2.53
+sub	3600	IN	DS	12345 13 2 ABCDEF0123456789
+_sip._tcp	3600	IN	SRV	0 5 5060 sip
+*.wild	3600	IN	A	192.0.2.99

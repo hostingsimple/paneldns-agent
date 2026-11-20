@@ -38,7 +38,19 @@ and compare the result with the published packages.
   (TYPE65280–TYPE65534) are stripped; a zone that had DNSKEY or RRSIG records is reported as
   signed at the source.
 
-Design choices are recorded in [`docs/DECISIONS.md`](docs/DECISIONS.md).
+Design choices are recorded in [`docs/DECISIONS.md`](docs/DECISIONS.md); the wire protocol,
+including the canonical zone text and content hash, in [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
+
+## Security model
+
+- The private key is generated on the server and never leaves it (`/var/lib/paneldns-agent/agent.key`,
+  mode 0600). PanelDNS stores only the public key, so a leak on the PanelDNS side can't be used to
+  push zones.
+- Every request is signed with Ed25519 over the method, path, time stamp, a random nonce, the
+  server-issued epoch, a sequence number that only increases, and the SHA-256 of the body bytes
+  as sent. Replays and reordered requests are refused by the server.
+- HTTPS only, certificate always verified. PanelDNS also refuses requests from addresses that
+  are not on the server's IP allowlist; the agent says so plainly in its log and in `--check`.
 
 ## Configuration
 
@@ -85,11 +97,14 @@ code to audit in a program that root installs on every hosting server.
 | `internal/engine/` | Scan, change detection, batching, retries, inventory, heartbeat |
 | `internal/backoff/` | Exponential backoff with full jitter |
 | `internal/state/` | Atomic state files in `/var/lib/paneldns-agent` |
-| `internal/protocol/` | Ingest API wire types (and, from t042, signing and the client) |
+| `internal/protocol/` | Ingest API: wire types, Ed25519 request signing, HTTPS client |
+| `internal/enrol/` | `enrol`: zone-source detection, key generation, enrolment |
+| `internal/host/` | Host name, OS, panel and public addresses |
+| `internal/fixtures/` | Checks and regenerates the shared fixtures in `testdata/` |
 | `internal/version/` | Version string, set at build time |
 | `packaging/` | Sample config (and, later, the systemd unit) |
 | `docs/` | Protocol and design decisions |
-| `testdata/` | Shared fixtures the PanelDNS app copies and pins by checksum |
+| `testdata/` | Shared fixtures the PanelDNS app copies and pins by checksum ([README](testdata/README.md)) |
 
 ## Licence
 

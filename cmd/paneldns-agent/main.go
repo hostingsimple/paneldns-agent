@@ -4,6 +4,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -18,10 +19,19 @@ Usage:
   paneldns-agent --check   [--config FILE] [--zone NAME] [--json]
   paneldns-agent enrol     --url URL --code CODE [--config FILE]
   paneldns-agent version
+
+The enrolment code can also be given in the PANELDNS_ENROL_CODE
+environment variable.
 `
 
 func main() {
 	os.Exit(realMain(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+func newFlagSet(name string, stderr io.Writer) *flag.FlagSet {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	return fs
 }
 
 func realMain(args []string, stdout, stderr io.Writer) int {
@@ -30,6 +40,10 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	switch args[0] {
+	case "run":
+		return cmdRun(args[1:], stderr)
+	case "enrol", "enroll":
+		return cmdEnrol(args[1:], stdout, stderr)
 	case "version", "--version", "-v":
 		fmt.Fprintln(stdout, version.Version)
 		return 0

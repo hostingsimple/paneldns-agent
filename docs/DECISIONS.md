@@ -149,3 +149,32 @@ number while the service runs.
 Full jitter: each delay is uniform in [0, min(10 min, 5 s × 2^n)), with a floor of 1 s. A
 `Retry-After` (seconds or HTTP date, capped at one hour) wins when it is longer. 401 and 426 wait
 the maximum 10 minutes between attempts. Scans continue on their interval during backoff.
+
+## D-17 Keys and enrolment files (7.1, 8.1)
+
+The key pair is generated on the server with `crypto/rand` and stored as PKCS #8 PEM in
+`/var/lib/paneldns-agent/agent.key`, mode 0600, owner `paneldns-agent` (readable with
+`openssl pkey`). The agent refuses to start if the key file is readable by group or others.
+Enrolment writes nothing until PanelDNS has accepted the code; then it writes the key,
+`identity.json`, `sequence.json` (the epoch from the answer) and an empty `state.json`, so the
+first run sends a full inventory without an extra `/epoch` call. A re-enrol replaces all four.
+The enrolment code may be given as `--code` or in `PANELDNS_ENROL_CODE`.
+
+## D-18 Zone source detection at enrolment (7.1, 7.3)
+
+In order: a PowerDNS `bind-config=` pointing at an existing named.conf (cPanel's PowerDNS with
+the bind backend) → BIND with that file; a chrooted named (`ROOTDIR` in `/etc/sysconfig/named`,
+an enabled `named-chroot.service` with `/var/named/chroot/etc/named.conf`, or `/etc/named.conf`
+linking into `/var/named/run-root` or `/var/named/chroot`) → BIND with `CHROOT`; the first of
+`/etc/named.conf`, `/etc/bind/named.conf`, `/etc/namedb/named.conf`,
+`/usr/local/etc/namedb/named.conf` → BIND; else a `pdns.conf` with `api=yes` and a plain
+`api-key` on a loopback (or wildcard) `webserver-address` → `powerdns-api`, the key copied to
+`pdns-api-key` (0600). A hashed PowerDNS API key can't be copied, so enrol stops and says what
+to do. The Plesk chroot detection is unverified until tried on a Plesk server.
+
+## D-19 Key rotation (8.1)
+
+On `rotate_key: true` the agent writes the new key to `agent.key.next`, calls `/rotate` signed
+with the old key, and only then renames the new key over `agent.key` and stores the new key id.
+If the agent dies in between, the old key still works (spec: until the new one is used once, or
+24 hours) and the server asks again; a stale `agent.key.next` is removed at start.

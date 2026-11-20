@@ -1,0 +1,31 @@
+; One record per canonical rule, for implementers of the hash.
+$ORIGIN example.net.
+$TTL 300
+@		IN SOA	ns1 hostmaster 7 2h 30m 2w 1h
+@		IN NS	ns1
+ns1		IN A	192.0.2.1
+upper		IN CNAME	Target.EXAMPLE.net.
+rel		IN PTR	host
+esc\.dot	IN A	192.0.2.2
+w\065b		IN A	192.0.2.3
+ctl\009x	IN A	192.0.2.4
+unq		IN TXT	plain\ word
+high		IN TXT	"caf\195\169"
+multi		IN TXT	"one" "two" three
+generic		IN TYPE999	\# 3 abcd ef
+generic0	IN TYPE999	\# 0
+typenum		IN TYPE1	192.0.2.5
+badaddr		IN A	not-an-address
+v6		IN AAAA	2001:0db8:0000:0000:0000:ff00:0042:8329
+mx		IN MX	010 mx
+srvdot		IN SRV	0 0 0 .
+https		IN HTTPS	1 . alpn=h2,h3 ipv4hint=192.0.2.6
+svc		IN SVCB	0 Svc.Example.NET.
+sshfp		IN SSHFP	4 2 abCD 0123
+naptr		IN NAPTR	100 10 u E2U+sip "!^.*$!sip:x@example.net!" .
+caa		IN CAA	128 Tbs value
+uri		IN URI	10 1 "https://example.net/"
+loc		IN LOC	52 22 23.000 N 4 53 32.000 E -2.00m 0.00m 10000m 10m
+rp		IN RP	Admin.example.net. txt
+dup		IN A	192.0.2.7
+dup		IN A	192.0.2.7
