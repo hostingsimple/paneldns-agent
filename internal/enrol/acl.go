@@ -77,12 +77,30 @@ func PlanACLs(cfg config.Config) (*ACLPlan, error) {
 			}
 			read[f] = true
 		}
+		allowed := []string{conf.Directory}
 		for _, z := range conf.Zones {
 			read[z.File] = true
 			if _, err := statFunc(rooted(z.Journal)); err == nil {
 				read[z.Journal] = true
 			}
 			dirs[path.Dir(z.File)] = true
+			allowed = append(allowed, path.Dir(z.File))
+		}
+		// Files a zone pulls in with $INCLUDE need the same access as the
+		// zone file, or named-compilezone can't read the zone as the agent.
+		for _, z := range conf.Zones {
+			if z.Format != "text" {
+				continue
+			}
+			incs, warns, err := zoneIncludes(z.File, conf.Directory, cfg.Chroot, allowed)
+			if err != nil {
+				return nil, fmt.Errorf("zone %s: %w", z.Name, err)
+			}
+			p.Warnings = append(p.Warnings, warns...)
+			for _, f := range incs {
+				read[f] = true
+				dirs[path.Dir(f)] = true
+			}
 		}
 	}
 	if cfg.OwnersFile != "" {
