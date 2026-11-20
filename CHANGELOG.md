@@ -6,6 +6,15 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Integration CI: the PowerDNS service image `powerdns/pdns-auth-49:4.9` does not exist; use
+  `powerdns/pdns-auth-51:5.1.5`, as the PanelDNS app's DNS suite does, pinned by digest.
+- Enrolment's read ACLs (and `tools/aclplan`) now follow `$INCLUDE` inside zone files,
+  recursively, granting read on the included files and their directories; without this the
+  agent couldn't read zones that include other files. Includes outside named's directory and
+  the zone directories, or at key material, are refused (DECISIONS D-22).
+
 ### Added
 
 - Repository skeleton: Go module, command, configuration reader and writer, sample

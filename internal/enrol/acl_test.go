@@ -1,10 +1,12 @@
 package enrol
 
 import (
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -104,4 +106,104 @@ func TestPlanACLsInlineKeyWarns(t *testing.T) {
 	if len(p.Warnings) != 1 || !strings.Contains(p.Warnings[0], "key statement") {
 		t.Fatalf("warnings %v", p.Warnings)
 	}
+}
+
+func TestPlanACLsFollowsZoneIncludes(t *testing.T) {
+	conf := `options { directory "/var/named"; };
+zone "example.com" { type master; file "example.com.db"; };`
+	soa := "$TTL 300\n@ IN SOA ns1.example.net. h.example.net. 1 1 1 1 1\n"
+	tests := []struct {
+		name      string
+		zone      string
+		extra     map[string]string
+		read      []string // included files expected in the plan
+		dirs      []string
+		warn      string
+		refusedAs string
+	}{
+		{name: "nested relative includes", zone: soa + "$INCLUDE inc/www.db\n; $INCLUDE commented/out.db\n$INCLUDE \"inc/quoted.db\" sub\n",
+			extra: map[string]string{
+				"/var/named/inc/www.db":      "www IN A 192.0.2.80\n$INCLUDE inc/deeper/x.db\n",
+				"/var/named/inc/deeper/x.db": "x IN A 192.0.2.81\n$INCLUDE inc/www.db\n", // loop back: followed once
+				"/var/named/inc/quoted.db":   "q IN A 192.0.2.82\n",
+			},
+			read: []string{"/var/named/inc/deeper/x.db", "/var/named/inc/quoted.db", "/var/named/inc/www.db"},
+			dirs: []string{"/var/named", "/var/named/inc", "/var/named/inc/deeper"}},
+		{name: "absolute include inside directory", zone: soa + "$INCLUDE /var/named/shared/ns.db\n",
+			extra: map[string]string{"/var/named/shared/ns.db": "@ IN NS ns1.example.net.\n"},
+			read:  []string{"/var/named/shared/ns.db"}, dirs: []string{"/var/named", "/var/named/shared"}},
+		{name: "outside", zone: soa + "$INCLUDE /etc/passwd\n", refusedAs: "outside named's directory"},
+		{name: "dot-dot escape", zone: soa + "$INCLUDE ../../etc/shadow\n", refusedAs: "resolves to /etc/shadow"},
+		{name: "rndc key", zone: soa + "$INCLUDE /etc/rndc.key\n", refusedAs: "outside"},
+		{name: "tsig key in a zone fragment", zone: soa + "$INCLUDE tsig.db\n",
+			extra:     map[string]string{"/var/named/tsig.db": "key \"xfer\" {\n algorithm hmac-sha256;\n secret \"c2VjcmV0\";\n};\n"},
+			refusedAs: "holds key material"},
+		{name: "dnssec private key", zone: soa + "$INCLUDE Kexample.com.+013+12345.private\n",
+			extra:     map[string]string{"/var/named/Kexample.com.+013+12345.private": "Private-key-format: v1.3\n"},
+			refusedAs: "key material"},
+		{name: "dnssec public key is fine", zone: soa + "$INCLUDE Kexample.com.+013+12345.key\n",
+			extra: map[string]string{"/var/named/Kexample.com.+013+12345.key": "example.com. IN DNSKEY 257 3 13 dGVzdA==\n"},
+			read:  []string{"/var/named/Kexample.com.+013+12345.key"}, dirs: []string{"/var/named"}},
+		{name: "missing include warns", zone: soa + "$INCLUDE inc/missing.db\n", dirs: []string{"/var/named"}, warn: "missing.db"},
+		{name: "too deep", zone: soa + "$INCLUDE d1.db\n", extra: func() map[string]string {
+			m := map[string]string{}
+			for i := 1; i <= 9; i++ {
+				m["/var/named/d"+strconv.Itoa(i)+".db"] = "$INCLUDE d" + strconv.Itoa(i+1) + ".db\n"
+			}
+			m["/var/named/d10.db"] = ""
+			return m
+		}(), refusedAs: "nested deeper than 8"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			files := map[string]string{"/etc/named.conf": conf, "/var/named/example.com.db": tt.zone}
+			for k, v := range tt.extra {
+				files[k] = v
+			}
+			withRoot(t, files)
+			cfg := config.Defaults()
+			cfg.ZonesFile = "/etc/named.conf"
+			p, err := PlanACLs(cfg)
+			if tt.refusedAs != "" {
+				if !errors.Is(err, ErrIncludeRefused) || !strings.Contains(err.Error(), tt.refusedAs) || !(strings.Contains(err.Error(), "/var/named/example.com.db:3: $INCLUDE") || strings.Contains(err.Error(), ".db:1: $INCLUDE")) {
+					t.Fatalf("want refusal %q naming file and line, got %v", tt.refusedAs, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, f := range tt.read {
+				if !contains(p.Read, f) {
+					t.Errorf("no read ACL for %s: %v", f, p.Read)
+				}
+			}
+			if !reflect.DeepEqual(p.Dirs, tt.dirs) {
+				t.Errorf("dirs %v, want %v", p.Dirs, tt.dirs)
+			}
+			if tt.warn != "" && (len(p.Warnings) != 1 || !strings.Contains(p.Warnings[0], tt.warn)) {
+				t.Errorf("warnings %v", p.Warnings)
+			}
+		})
+	}
+}
+
+func TestZoneIncludesChroot(t *testing.T) {
+	withRoot(t, map[string]string{
+		"/var/named/run-root/var/named/example.com.db": "$INCLUDE /var/named/inc/a.db\n",
+		"/var/named/run-root/var/named/inc/a.db":       "a IN A 192.0.2.1\n",
+	})
+	files, warns, err := zoneIncludes("/var/named/run-root/var/named/example.com.db", "/var/named/run-root/var/named", "/var/named/run-root", []string{"/var/named/run-root/var/named"})
+	if err != nil || len(warns) != 0 || !reflect.DeepEqual(files, []string{"/var/named/run-root/var/named/inc/a.db"}) {
+		t.Fatalf("files %v warns %v err %v", files, warns, err)
+	}
+}
+
+func contains(s []string, v string) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }

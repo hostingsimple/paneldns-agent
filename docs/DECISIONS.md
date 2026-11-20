@@ -215,6 +215,17 @@ moving it to its own include. `--no-acl` prints the commands instead of running 
 panel resets ACLs when it rewrites a zone file is unverified (prototype); `--check` opens every
 zone file as the agent and fails with the list of unreadable ones.
 
+**`$INCLUDE` in zone files** (found by the CI ACL test). The plan follows `$INCLUDE` in every
+text-format zone file, recursively up to 8 levels (the parser's limit), resolving relative names
+against named's `directory` as named and `named-compilezone -w` do, and absolute names inside the
+chroot. Each included file gets `u:paneldns-agent:r` and its directory `rx` plus the default
+`r` (parents `x`), like a zone file. Enrol refuses, naming the zone file, line and target:
+an include outside named's `directory` and the zone directories (after resolving `..`); one of
+the key files the unit makes inaccessible or a `.private` DNSSEC key; and any included file whose
+content holds key material (a `key`/`tsig-keygen` statement, a `secret "..."`, or
+`Private-key-format:`). Public `K*.key` DNSKEY files are allowed. An include that can't be read
+even as root is a warning: that zone fails to read and is reported, but enrolment goes on.
+
 ## D-23 Low priority for `named-compilezone` (7.8)
 
 Instead of wrapping each run in `nice 10` and `ionice -c3`, the unit sets `Nice=10` and
@@ -251,9 +262,16 @@ directories with separate build caches and compares the bytes, and the testdata 
 shared-fixture check. `integration.yml` installs the distribution's BIND 9 (`named`,
 `named-compilezone`, `nsupdate`) on the runner rather than using a BIND service container,
 because the tests need `named-compilezone` locally and the fixture files mounted before the
-container starts, which service containers can't do; PowerDNS runs as a service container
-(`powerdns/pdns-auth-49`, API key from `PDNS_AUTH_API_KEY`). The image is pinned by tag for now;
-pin it by digest when packaging lands (t044). Actions are pinned by commit SHA, every workflow
+container starts, which service containers can't do; PowerDNS runs as a service container:
+`powerdns/pdns-auth-51:5.1.5`, the image and version the PanelDNS app's own DNS integration suite
+uses, pinned by the digest of its multi-arch index
+(`sha256:77ff4efdbb9ec30e9309c8a1cbed6121a67fa3be25c848bbbfa756fc75bf9a27`, read from Docker
+Hub and confirmed against the registry). The API key comes from `PDNS_AUTH_API_KEY`; the image's
+startup script writes the API and webserver settings to `pdns.d/_api.conf`, as in the app's
+suite. The app also mounts a `pdns.d` file with `secondary=yes` and an empty
+`security-poll-suffix`; a service container starts before checkout and can't mount repository
+files, and neither setting matters to these tests (no zone transfers; the runner has outbound
+network). Bump the version together with the app's suite. Actions are pinned by commit SHA, every workflow
 has `permissions: {}` at the top and `contents: read` per job, `actions/setup-go` runs with
 `cache: false`, and checkout keeps no credentials. `tools/repocheck workflows` enforces the pins,
 the top-level permissions, no `pull_request_target`/`workflow_run`, and no `environment:` outside
