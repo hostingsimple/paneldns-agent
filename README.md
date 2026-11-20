@@ -82,6 +82,10 @@ code to audit in a program that root installs on every hosting server.
 | `internal/zonefile/` | RFC 1035 zone-file parser and the DNSSEC/private-type strip list |
 | `internal/source/` | Zone sources: BIND (named.conf + `named-compilezone`) and the PowerDNS local API |
 | `internal/filter/` | System zones and `EXCLUDE` patterns |
+| `internal/engine/` | Scan, change detection, batching, retries, inventory, heartbeat |
+| `internal/backoff/` | Exponential backoff with full jitter |
+| `internal/state/` | Atomic state files in `/var/lib/paneldns-agent` |
+| `internal/protocol/` | Ingest API wire types (and, from t042, signing and the client) |
 | `internal/version/` | Version string, set at build time |
 | `packaging/` | Sample config (and, later, the systemd unit) |
 | `docs/` | Protocol and design decisions |

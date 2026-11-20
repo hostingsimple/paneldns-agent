@@ -93,3 +93,59 @@ Zones of kind `Native`, `Master` or `Primary` are read; `Slave`, `Secondary`, `P
 `Consumer` are skipped. The fingerprint is `serial` plus `edited_serial` from the zone list; a
 change made without a serial change is picked up by the next full resync, which re-reads every
 zone (D-13). The export is accepted as `text/plain` or as the older `{"zone": "..."}` JSON.
+
+## D-11 Change detection (7.4)
+
+The fingerprint is: BIND, the zone file's size and mtime (nanoseconds), the journal's, the
+zone's `check-names`, integrity and format options, and the size and mtime of every file the
+zone `$INCLUDE`s at top level (found by a cheap scan of the zone file whenever its own stamp
+changes); PowerDNS, `serial` and `edited_serial`. A zone whose fingerprint changed is read and
+hashed; it is pushed only if the hash differs from the hash the server last acknowledged, so a
+serial bump alone sends nothing. A zone that fails to read keeps its last acknowledged content on
+the server, is reported in the heartbeat, and is retried every scan; it is never treated as
+deleted.
+
+## D-12 What "acknowledged" means (7.5, 8.4)
+
+The agent records a zone's hash as acknowledged when the server answers `accepted`,
+`unchanged`, `stored`, `skipped_records`, `held` or `excluded`. `refused` records the hash as
+refused: that exact content is not sent again until it changes, or the server asks for it (an
+inventory's `need` or a heartbeat's `resync_names`). An unknown status or a missing result leaves
+the zone pending, so it is sent again next cycle. A non-retryable 4xx for a whole `/zones` batch
+(not 401, 403, 409 `epoch_stale` or 426) marks every zone in the batch refused with reason
+`http_<status>`. A changed owner (panel account) makes the agent push the zone again even if its
+content is unchanged.
+
+## D-13 Full resync re-reads every zone (7.4)
+
+On start, every `RESYNC` seconds after the last acknowledged inventory, after an epoch reset, and
+when the server asks, the next scan re-reads every zone (not only changed fingerprints) and the
+inventory follows it. This catches edits that left the fingerprint unchanged. While PanelDNS is
+unreachable the inventory stays due, but scans after the first full one are incremental again, so
+an offline agent doesn't compile every zone every minute.
+
+## D-14 Guards before reporting (7.4)
+
+A scan is refused, and nothing but a heartbeat with the error is sent, when (a) the zone listing
+fails, (b) a config file that declared zones in the last good scan can't be read now (D-02), or
+(c) the spec's empty-inventory guard trips: the scan found no zones, or fewer than half of the
+last acknowledged inventory, and the DNS server is not confirmed running. "Running" for BIND
+means named's pid file (`pid-file` option or the usual paths) names a live process; for PowerDNS
+that the API answers. An unknown state counts as not running, so the guard errs on the side of
+not deleting.
+
+## D-15 Offline behaviour and the state files (7.5)
+
+What is pending is derived from the state, not queued: a zone is pending while its current hash
+differs from the acknowledged one, and a deletion is pending while a name the server
+acknowledged is gone. After an outage the agent therefore sends each zone's latest content once.
+Zone text read during a scan is kept in memory (up to 8 MB) until it is acknowledged; zones beyond
+that are read again when sent. `state.json` holds the per-zone fingerprints and hashes; the epoch
+and sequence live in `sequence.json` (see PROTOCOL.md) because `--check` must take a sequence
+number while the service runs.
+
+## D-16 Backoff (7.5)
+
+Full jitter: each delay is uniform in [0, min(10 min, 5 s × 2^n)), with a floor of 1 s. A
+`Retry-After` (seconds or HTTP date, capped at one hour) wins when it is longer. 401 and 426 wait
+the maximum 10 minutes between attempts. Scans continue on their interval during backoff.
