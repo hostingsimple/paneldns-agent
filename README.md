@@ -12,7 +12,13 @@ configuration or panel data, and never downloads or replaces code.
 This repository is public so that a hosting company can read exactly what it installs, rebuild it
 and compare the result with the published packages.
 
-> Status: pre-release (0.1.0-dev). Packaging and the signed APT/YUM repository come later.
+> Status: pre-release (0.1.0-dev); no release has been published yet.
+
+## Install
+
+Signed `.deb` and `.rpm` packages come from `https://packages.paneldns.com`; see
+[`docs/INSTALL.md`](docs/INSTALL.md). Signing key fingerprint:
+`AAE3 B3B1 258C AAB0 ED1A  E1C3 697D 46A6 32CB 9283`.
 
 ## How it works
 
@@ -138,7 +144,8 @@ the agent.
 | `internal/integration/` | Tests against real BIND 9 and PowerDNS (`-tags integration`) |
 | `tools/repocheck/` | CI rules: testdata scan, workflow pinning and permissions |
 | `tools/aclplan/` | Prints the read-ACL commands enrol would run |
-| `packaging/` | Sample config and the hardened systemd unit |
+| `packaging/` | Sample config, hardened systemd unit, package scripts, repository publishing, `install.sh` |
+| `.goreleaser.yaml` | Package and tarball build (GoReleaser/nfpm) |
 | `docs/` | Protocol and design decisions |
 | `testdata/` | Shared fixtures the PanelDNS app copies and pins by checksum ([README](testdata/README.md)) |
 

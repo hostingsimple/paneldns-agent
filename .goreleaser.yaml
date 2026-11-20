@@ -1,0 +1,128 @@
+# GoReleaser configuration (spec 7.1, 7.10, 7.12).
+#
+# Builds the agent for linux/amd64 and linux/arm64 with the same flags as
+# the reproducibility check in .github/workflows/ci.yml, and packages it as
+# .deb, .rpm and a tarball. Nothing here signs or publishes: signing runs in
+# the release workflow's protected sign-and-publish job, after this build.
+#
+#   goreleaser release --snapshot --clean --skip=publish   # local / CI test
+version: 2
+
+project_name: paneldns-agent
+
+builds:
+  - id: paneldns-agent
+    main: ./cmd/paneldns-agent
+    binary: paneldns-agent
+    env:
+      - CGO_ENABLED=0
+    goos: [linux]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -buildid= -X github.com/hostingsimple/paneldns-agent/internal/version.Version={{ .Version }}
+    # File times from the commit, so archives and packages are reproducible.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: tarball
+    ids: [paneldns-agent]
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_linux_{{ .Arch }}"
+    wrap_in_directory: true
+    builds_info:
+      mtime: "{{ .CommitDate }}"
+    files:
+      - src: LICENSE
+        info: { mtime: "{{ .CommitDate }}" }
+      - src: NOTICE
+        info: { mtime: "{{ .CommitDate }}" }
+      - src: README.md
+        info: { mtime: "{{ .CommitDate }}" }
+      - src: CHANGELOG.md
+        info: { mtime: "{{ .CommitDate }}" }
+      - src: docs/INSTALL.md
+        info: { mtime: "{{ .CommitDate }}" }
+      - src: packaging/systemd/paneldns-agent.service
+        dst: paneldns-agent.service
+        info: { mtime: "{{ .CommitDate }}" }
+      - src: packaging/paneldns-agent.conf
+        dst: paneldns-agent.conf
+        info: { mtime: "{{ .CommitDate }}" }
+
+nfpms:
+  - id: packages
+    ids: [paneldns-agent]
+    package_name: paneldns-agent
+    file_name_template: "{{ .ConventionalFileName }}"
+    vendor: HostingSimple
+    homepage: https://github.com/hostingsimple/paneldns-agent
+    # TODO(owner): a maintainer contact address (Debian expects "Name <email>").
+    maintainer: HostingSimple
+    description: |-
+      PanelDNS agent for Panel Sync.
+      Reads the zones of this server's own DNS (BIND or PowerDNS) and pushes
+      them, Ed25519-signed, to PanelDNS over HTTPS. It only connects out.
+    license: Apache-2.0
+    section: net
+    priority: optional
+    formats: [deb, rpm]
+    bindir: /usr/bin
+    mtime: "{{ .CommitDate }}"
+    # setfacl, used by `paneldns-agent enrol` to grant read access.
+    recommends:
+      - acl
+    contents:
+      - src: packaging/systemd/paneldns-agent.service
+        dst: /usr/lib/systemd/system/paneldns-agent.service
+        file_info: { mode: 0644 }
+      # A config file: upgrades keep local edits (dpkg conffile, rpm noreplace).
+      - src: packaging/paneldns-agent.conf
+        dst: /etc/paneldns-agent.conf
+        type: config|noreplace
+        file_info: { mode: 0640, owner: root, group: paneldns-agent }
+      - dst: /var/lib/paneldns-agent
+        type: dir
+        file_info: { mode: 0700, owner: paneldns-agent, group: paneldns-agent }
+      - src: LICENSE
+        dst: /usr/share/doc/paneldns-agent/LICENSE
+        file_info: { mode: 0644 }
+      - src: NOTICE
+        dst: /usr/share/doc/paneldns-agent/NOTICE
+        file_info: { mode: 0644 }
+      - src: README.md
+        dst: /usr/share/doc/paneldns-agent/README.md
+        file_info: { mode: 0644 }
+      - src: CHANGELOG.md
+        dst: /usr/share/doc/paneldns-agent/CHANGELOG.md
+        file_info: { mode: 0644 }
+    # Maintainer scripts: create the user and state directory, reload systemd,
+    # restart the unit if enabled. No network access, no downloads (7.1).
+    scripts:
+      preinstall: packaging/scripts/preinstall.sh
+      postinstall: packaging/scripts/postinstall.sh
+      preremove: packaging/scripts/preremove.sh
+      postremove: packaging/scripts/postremove.sh
+    overrides:
+      rpm:
+        # useradd/groupadd for the preinstall script.
+        dependencies: [shadow-utils]
+    rpm:
+      group: System Environment/Daemons
+      summary: PanelDNS agent for Panel Sync
+
+checksum:
+  name_template: SHA256SUMS
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+changelog:
+  disable: true
+
+# The GitHub release is created by the sign-and-publish job, with the signed
+# checksums; GoReleaser never publishes.
+release:
+  disable: true

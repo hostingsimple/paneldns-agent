@@ -1,0 +1,37 @@
+name: resign-schedule
+
+# Weekly re-sign of the repository metadata (spec 7.10): APT Valid-Until is
+# 14 days, so the metadata must be re-signed in time. This workflow holds no
+# secret; it dispatches release.yml in resign mode on the latest release tag,
+# so the signing environment still only ever runs for a version tag, and
+# that run waits for the owner's approval like any signing run.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  dispatch:
+    name: dispatch the re-sign
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: dispatch release.yml (mode resign) on the latest release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          tag="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '[.[] | select(.draft == false and .prerelease == false)][0].tag_name // ""')"
+          if [ -z "$tag" ]; then
+            echo "no published release yet; nothing to re-sign"
+            exit 0
+          fi
+          case "$tag" in v*) ;; *) echo "latest release $tag is not a v* tag"; exit 1 ;; esac
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$tag" -f mode=resign
+          echo "dispatched the re-sign on $tag; approve the release-signing environment to run it"

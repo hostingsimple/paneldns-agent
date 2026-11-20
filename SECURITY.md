@@ -35,4 +35,6 @@ vulnerability:
 ## Release signing
 
 Release packages are built and signed on GitHub-hosted runners, in a protected environment that
-needs the owner's approval. The signing key is never in this repository.
+needs the owner's approval. The signing key is never in this repository; only its public half
+(`packaging/gpg.key`, fingerprint `AAE3B3B1258CAAB0ED1AE1C3697D46A632CB9283`) is. How to verify
+packages, checksums and build provenance: [`docs/INSTALL.md`](docs/INSTALL.md).

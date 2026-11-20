@@ -128,3 +128,59 @@ jobs:
         run: go run ./tools/repocheck testdata
       - name: shared fixtures and SHA256SUMS up to date
         run: go test -count=1 ./internal/fixtures
+
+  packages:
+    name: packages (snapshot build and install test)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      # Pinned by the digest of each multi-arch index (registry-1.docker.io).
+      DEBIAN_IMAGE: debian:13@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6
+      UBUNTU_IMAGE: ubuntu:24.04@sha256:9c7f200c07e3d4a03e7249d2c16bf66a51120fb876aa2242cf31451412543289
+      ALMA_IMAGE: almalinux:9@sha256:02df05719ef287ebd0df0a1eedb9172a00bd70703aed7b25660e426b8e0d6047
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: shell scripts parse as POSIX sh
+        run: |
+          for f in packaging/scripts/*.sh packaging/repo/publish.sh packaging/install.sh packaging/ci/*.sh; do
+            sh -n "$f"
+          done
+      - name: install GoReleaser (pinned, checksum verified)
+        run: sh packaging/ci/install-goreleaser.sh "$RUNNER_TEMP/bin"
+      - name: snapshot build (no signing, no publishing)
+        run: |
+          "$RUNNER_TEMP/bin/goreleaser" check
+          "$RUNNER_TEMP/bin/goreleaser" release --snapshot --clean --skip=publish
+          ls -l dist
+      - name: the packaged binary is the reproducible build
+        run: |
+          version="$(jq -r .version dist/metadata.json)"
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath \
+              -ldflags "-s -w -buildid= -X github.com/hostingsimple/paneldns-agent/internal/version.Version=$version" \
+              -o "$RUNNER_TEMP/plain.$arch" ./cmd/paneldns-agent
+            built="$(find dist -path "*linux_${arch}*" -name paneldns-agent -type f | head -n 1)"
+            cmp "$RUNNER_TEMP/plain.$arch" "$built"
+          done
+      - name: install, upgrade and remove on Debian, Ubuntu and AlmaLinux
+        run: |
+          set -eu
+          run() { docker run --rm -v "$PWD/dist:/dist:ro" -v "$PWD/packaging/ci:/ci:ro" "$1" sh /ci/test-package.sh "$2" /dist; }
+          run "$DEBIAN_IMAGE" deb
+          run "$UBUNTU_IMAGE" deb
+          run "$ALMA_IMAGE" rpm
+      - name: the installed systemd unit verifies
+        run: |
+          set -eu
+          sudo dpkg -i dist/paneldns-agent_*_amd64.deb
+          systemd-analyze verify /usr/lib/systemd/system/paneldns-agent.service
+          systemd-analyze security paneldns-agent.service --no-pager || true
+          sudo dpkg -r paneldns-agent

@@ -1,0 +1,275 @@
+name: release
+
+# Release and repository signing (spec 7.10, 7.12, decision 36).
+#
+#   build             no secrets: GoReleaser builds .deb, .rpm, tarballs, SHA256SUMS
+#   attest            no secrets: build provenance for the tarballs and .debs
+#   sign-and-publish  environment release-signing (owner approval, v* tags only):
+#                     signs the .rpms, SHA256SUMS and the APT/YUM metadata, commits
+#                     them to hostingsimple/paneldns-packages with the deploy key,
+#                     creates the GitHub release
+#   attest-signed     no secrets: provenance for the signed .rpms and SHA256SUMS
+#
+# Triggers: a pushed v* tag (release), or a dispatch on a v* tag with
+# mode=resign (weekly re-sign, sent by resign-schedule.yml). Pull requests and
+# forks can't start this workflow, and every job also checks the ref.
+# Pre-release tags (containing "-", e.g. v0.1.0-p5.1) publish to the
+# "staging" branch of paneldns-packages instead of "main" (prototype P5).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "resign: re-sign the repository metadata with a fresh Valid-Until (dispatch on the latest release tag)"
+        type: choice
+        options: [resign]
+        required: true
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  SIGNING_FINGERPRINT: AAE3B3B1258CAAB0ED1AE1C3697D46A632CB9283
+
+jobs:
+  build:
+    name: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: the tag points at a commit on main
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: install GoReleaser (pinned, checksum verified)
+        run: sh packaging/ci/install-goreleaser.sh "$RUNNER_TEMP/bin"
+      - name: build packages
+        run: |
+          "$RUNNER_TEMP/bin/goreleaser" check
+          "$RUNNER_TEMP/bin/goreleaser" release --clean --skip=publish
+      - name: the packaged binary is the reproducible build
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath \
+              -ldflags "-s -w -buildid= -X github.com/hostingsimple/paneldns-agent/internal/version.Version=$version" \
+              -o "$RUNNER_TEMP/plain.$arch" ./cmd/paneldns-agent
+            built="$(find dist -path "*linux_${arch}*" -name paneldns-agent -type f | head -n 1)"
+            cmp "$RUNNER_TEMP/plain.$arch" "$built"
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            dist/*.deb
+            dist/*.rpm
+            dist/*.tar.gz
+            dist/SHA256SUMS
+
+  attest:
+    name: attest
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      # The .rpm files change when they are signed; they are attested after
+      # signing, in attest-signed.
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/*.deb
+            dist/*.tar.gz
+
+  sign-and-publish:
+    name: sign-and-publish
+    needs: [build, attest]
+    if: >-
+      !cancelled() && startsWith(github.ref, 'refs/tags/v') &&
+      ((github.event_name == 'push' && needs.build.result == 'success' && needs.attest.result == 'success') ||
+       (github.event_name == 'workflow_dispatch' && inputs.mode == 'resign'))
+    runs-on: ubuntu-latest
+    environment: release-signing
+    permissions:
+      contents: write # the GitHub release of this repository only
+    env:
+      MODE: ${{ github.event_name == 'push' && 'release' || 'resign' }}
+    steps:
+      # Everything the job runs is installed before the key is imported.
+      - name: install signing tools from the runner image's distribution
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gnupg rpm createrepo-c apt-utils
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: agent
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: env.MODE == 'release'
+        with:
+          name: dist
+          path: dist
+      - name: verify the artefacts against SHA256SUMS
+        if: env.MODE == 'release'
+        working-directory: dist
+        run: sha256sum -c SHA256SUMS
+      - name: the published public key is the expected key
+        run: |
+          key=agent/packaging/gpg.key
+          if ! grep -q -- '-----BEGIN PGP PUBLIC KEY BLOCK-----' "$key"; then
+            echo "packaging/gpg.key is still a placeholder; add the public key first"; exit 1
+          fi
+          if grep -q -- 'PRIVATE KEY' "$key"; then echo "private key material in gpg.key"; exit 1; fi
+          fpr="$(gpg --batch --with-colons --show-keys "$key" | awk -F: '$1 == "fpr" { print $10; exit }')"
+          [ "$fpr" = "$SIGNING_FINGERPRINT" ] || { echo "gpg.key fingerprint $fpr != $SIGNING_FINGERPRINT"; exit 1; }
+      - name: import the signing subkey into a throw-away keyring
+        env:
+          PACKAGES_SIGNING_KEY: ${{ secrets.PACKAGES_SIGNING_KEY }}
+          PACKAGES_SIGNING_PASSPHRASE: ${{ secrets.PACKAGES_SIGNING_PASSPHRASE }}
+        run: |
+          set -eu
+          umask 077
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          mkdir -p "$GNUPGHOME"
+          printf '%s' "$PACKAGES_SIGNING_PASSPHRASE" > "$RUNNER_TEMP/passphrase"
+          printf '%s\n' "$PACKAGES_SIGNING_KEY" | gpg --batch --quiet --import
+          # The primary must be absent (offline): only "sec#" is accepted.
+          gpg --batch --with-colons --list-secret-keys "$SIGNING_FINGERPRINT" > "$RUNNER_TEMP/sec.txt"
+          awk -F: '$1 == "sec" { if ($15 != "#") { print "the primary secret key must stay offline"; exit 1 } }' "$RUNNER_TEMP/sec.txt"
+          awk -F: '$1 == "ssb" && $12 ~ /s/ && $15 != "#" { ok = 1 } END { exit !ok }' "$RUNNER_TEMP/sec.txt" \
+            || { echo "no usable signing subkey"; exit 1; }
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+          echo "PASSFILE=$RUNNER_TEMP/passphrase" >> "$GITHUB_ENV"
+      - name: sign the rpm packages
+        if: env.MODE == 'release'
+        run: |
+          set -eu
+          rpmsign --define "_gpg_name $SIGNING_FINGERPRINT" --define "_gpg_path $GNUPGHOME" \
+            --define "_gpg_sign_cmd_extra_args --batch --pinentry-mode loopback --passphrase-file $PASSFILE" \
+            --addsign dist/*.rpm
+          db="$(mktemp -d)"
+          rpmkeys --dbpath "$db" --import agent/packaging/gpg.key
+          rpmkeys --dbpath "$db" --checksig dist/*.rpm | tee "$RUNNER_TEMP/checksig.txt"
+          if grep -v 'digests signatures OK' "$RUNNER_TEMP/checksig.txt"; then exit 1; fi
+      - name: signed checksums
+        if: env.MODE == 'release'
+        working-directory: dist
+        run: |
+          set -eu
+          sha256sum -- *.tar.gz *.deb *.rpm > SHA256SUMS
+          gpg --batch --yes --pinentry-mode loopback --passphrase-file "$PASSFILE" \
+            --local-user "$SIGNING_FINGERPRINT" --armor --detach-sign --output SHA256SUMS.asc SHA256SUMS
+          gpg --batch --verify SHA256SUMS.asc SHA256SUMS
+      - name: clone paneldns-packages with the deploy key
+        env:
+          PACKAGES_DEPLOY_KEY: ${{ secrets.PACKAGES_DEPLOY_KEY }}
+        run: |
+          set -eu
+          umask 077
+          printf '%s\n' "$PACKAGES_DEPLOY_KEY" > "$RUNNER_TEMP/deploy_key"
+          # github.com's published ed25519 host key (gh api meta).
+          echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$RUNNER_TEMP/known_hosts"
+          ssh_cmd="ssh -i $RUNNER_TEMP/deploy_key -o IdentitiesOnly=yes -o UserKnownHostsFile=$RUNNER_TEMP/known_hosts -o StrictHostKeyChecking=yes"
+          echo "GIT_SSH_COMMAND=$ssh_cmd" >> "$GITHUB_ENV"
+          export GIT_SSH_COMMAND="$ssh_cmd"
+          case "$GITHUB_REF_NAME" in
+            *-*) branch=staging ;;
+            *) branch=main ;;
+          esac
+          echo "PACKAGES_BRANCH=$branch" >> "$GITHUB_ENV"
+          git clone --quiet git@github.com:hostingsimple/paneldns-packages.git packages
+          cd packages
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+            git checkout --quiet "$branch"
+          else
+            git checkout --quiet -B "$branch"
+          fi
+      - name: update the APT and YUM repository
+        env:
+          REPO: ${{ github.workspace }}/packages
+          AGENT: ${{ github.workspace }}/agent
+          DIST: ${{ github.workspace }}/dist
+          SIGN_FPR: ${{ env.SIGNING_FINGERPRINT }}
+        run: sh agent/packaging/repo/publish.sh
+      - name: commit and push to paneldns-packages
+        working-directory: packages
+        run: |
+          set -eu
+          git config user.name "paneldns-agent release"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then echo "nothing to commit"; exit 0; fi
+          git commit --quiet -m "$MODE: paneldns-agent $GITHUB_REF_NAME ($(date -u +%Y-%m-%d))" \
+            -m "From $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          git push --quiet origin "HEAD:$PACKAGES_BRANCH"
+      - name: GitHub release
+        if: env.MODE == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          pre=""
+          case "$GITHUB_REF_NAME" in *-*) pre="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag $pre \
+            --title "paneldns-agent $GITHUB_REF_NAME" \
+            --notes "See CHANGELOG.md. Verify: gpg --verify SHA256SUMS.asc SHA256SUMS; gh attestation verify <file> --repo $GITHUB_REPOSITORY" \
+            dist/*.tar.gz dist/*.deb dist/*.rpm dist/SHA256SUMS dist/SHA256SUMS.asc
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: env.MODE == 'release'
+        with:
+          name: signed
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            dist/*.rpm
+            dist/SHA256SUMS
+            dist/SHA256SUMS.asc
+      - name: delete the keyring, passphrase and deploy key
+        if: always()
+        run: |
+          if [ -n "${GNUPGHOME:-}" ]; then gpgconf --kill all || true; fi
+          rm -rf "$RUNNER_TEMP/gnupg" "$RUNNER_TEMP/passphrase" "$RUNNER_TEMP/deploy_key" "$RUNNER_TEMP/sec.txt"
+
+  attest-signed:
+    name: attest signed packages
+    needs: sign-and-publish
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.sign-and-publish.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed
+          path: dist
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/*.rpm
+            dist/SHA256SUMS

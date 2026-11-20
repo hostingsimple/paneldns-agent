@@ -252,33 +252,153 @@ func checkWorkflows(dir string) ([]string, error) {
 	return problems, nil
 }
 
+var (
+	jobRe       = regexp.MustCompile(`^  ([A-Za-z0-9_-]+):\s*$`)
+	imageRe     = regexp.MustCompile(`^\s*(?:image|[A-Z0-9_]+_IMAGE):\s*(\S+)`)
+	secretsRe   = regexp.MustCompile(`secrets\.([A-Za-z0-9_]+)`)
+	tagGuard    = "startsWith(github.ref, 'refs/tags/v')"
+	signingJob  = "sign-and-publish"
+	releaseFile = "/release.yml"
+)
+
+type job struct {
+	name, ifExpr     string
+	line             int
+	hasPerms, hasEnv bool
+}
+
+// lintWorkflow checks one workflow (spec 7.10, 7.11, 17):
+//   - every action is pinned by a 40-character commit SHA, and every
+//     container image by digest;
+//   - permissions: at the top and on every job;
+//   - no pull_request_target or workflow_run trigger;
+//   - only release.yml's sign-and-publish job names an environment, and only
+//     it reads secrets other than GITHUB_TOKEN;
+//   - release.yml runs only for v* tags: no pull_request trigger, and every
+//     job is guarded by the tag check;
+//   - actions/setup-go never restores a cache.
 func lintWorkflow(name, text string) []string {
 	var problems []string
-	hasPerms := false
-	for i, line := range strings.Split(text, "\n") {
+	add := func(n int, format string, a ...any) {
+		problems = append(problems, fmt.Sprintf("%s:%d: ", name, n)+fmt.Sprintf(format, a...))
+	}
+	isRelease := strings.HasSuffix(name, releaseFile)
+	hasPerms, inJobs := false, false
+	var jobs []*job
+	var cur *job
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
 		n := i + 1
 		code := line
-		if j := strings.Index(code, "#"); j >= 0 {
+		if j := strings.Index(code, " #"); j >= 0 {
 			code = code[:j]
+		}
+		if strings.HasPrefix(code, "#") {
+			continue
 		}
 		if strings.HasPrefix(code, "permissions:") {
 			hasPerms = true
 		}
+		if strings.HasPrefix(code, "jobs:") {
+			inJobs = true
+			continue
+		}
+		if inJobs && len(code) > 0 && code[0] != ' ' {
+			inJobs, cur = false, nil
+		}
+		if inJobs {
+			if m := jobRe.FindStringSubmatch(code); m != nil {
+				cur = &job{name: m[1], line: n}
+				jobs = append(jobs, cur)
+				continue
+			}
+			if cur != nil && strings.HasPrefix(code, "    ") && !strings.HasPrefix(code, "     ") {
+				key := strings.TrimSpace(code)
+				switch {
+				case strings.HasPrefix(key, "permissions:"):
+					cur.hasPerms = true
+				case strings.HasPrefix(key, "environment:"):
+					cur.hasEnv = true
+				case strings.HasPrefix(key, "if:"):
+					expr := strings.TrimSpace(strings.TrimPrefix(key, "if:"))
+					// A folded (>-) expression continues on deeper lines.
+					for k := i + 1; k < len(lines) && strings.HasPrefix(lines[k], "      "); k++ {
+						expr += " " + strings.TrimSpace(lines[k])
+					}
+					cur.ifExpr = expr
+				}
+			}
+		}
 		if m := usesRe.FindStringSubmatch(code); m != nil {
 			u := m[1]
 			if !strings.HasPrefix(u, "./") && !strings.HasPrefix(u, "docker://") && !pinnedRe.MatchString(u) {
-				problems = append(problems, fmt.Sprintf("%s:%d: action %s is not pinned by a 40-character commit SHA", name, n, u))
+				add(n, "action %s is not pinned by a 40-character commit SHA", u)
+			}
+			if strings.HasPrefix(u, "actions/setup-go@") && !stepHas(lines, i, "cache: false") {
+				add(n, "actions/setup-go must run with cache: false")
 			}
 		}
-		if trigRe.MatchString(code) {
-			problems = append(problems, fmt.Sprintf("%s:%d: pull_request_target and workflow_run are not allowed", name, n))
+		if m := imageRe.FindStringSubmatch(code); m != nil && !strings.Contains(m[1], "@sha256:") {
+			add(n, "image %s is not pinned by digest", m[1])
 		}
-		if envRe.MatchString(code) && !strings.HasSuffix(name, "/release.yml") {
-			problems = append(problems, fmt.Sprintf("%s:%d: only release.yml may name an environment", name, n))
+		if trigRe.MatchString(code) {
+			add(n, "pull_request_target and workflow_run are not allowed")
+		}
+		if isRelease && strings.Contains(code, "pull_request") {
+			add(n, "release.yml must not run for pull requests")
+		}
+		for _, m := range secretsRe.FindAllStringSubmatch(code, -1) {
+			if m[1] == "GITHUB_TOKEN" {
+				continue
+			}
+			if !isRelease || cur == nil || cur.name != signingJob {
+				add(n, "secrets.%s may only be read by release.yml's %s job", m[1], signingJob)
+			}
+		}
+		if envRe.MatchString(code) && !isRelease {
+			add(n, "only release.yml may name an environment")
 		}
 	}
 	if !hasPerms {
 		problems = append(problems, fmt.Sprintf("%s: no top-level permissions:", name))
 	}
+	for _, j := range jobs {
+		if !j.hasPerms {
+			add(j.line, "job %s has no permissions:", j.name)
+		}
+		if j.hasEnv && (!isRelease || j.name != signingJob) {
+			add(j.line, "job %s names an environment; only release.yml's %s may", j.name, signingJob)
+		}
+		if isRelease && !strings.Contains(j.ifExpr, tagGuard) {
+			add(j.line, "release.yml job %s must be guarded by if: %s", j.name, tagGuard)
+		}
+	}
+	if isRelease {
+		on := strings.Contains(text, "\non:\n  push:\n    tags:")
+		if !on {
+			problems = append(problems, fmt.Sprintf("%s: release.yml must trigger on push of tags", name))
+		}
+	}
 	return problems
+}
+
+// stepHas reports whether the step starting at line i (a "- uses:" line)
+// contains want before the next step or job.
+func stepHas(lines []string, i int, want string) bool {
+	indent := len(lines[i]) - len(strings.TrimLeft(lines[i], " "))
+	for k := i + 1; k < len(lines); k++ {
+		l := lines[k]
+		t := strings.TrimLeft(l, " ")
+		if t == "" {
+			continue
+		}
+		in := len(l) - len(t)
+		if in <= indent {
+			return false
+		}
+		if strings.HasPrefix(t, want) {
+			return true
+		}
+	}
+	return false
 }

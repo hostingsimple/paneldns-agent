@@ -298,3 +298,65 @@ private space. Other dotted words count as names only if the last label is a kno
 two-letter label except common file extensions, plus a list of generic TLDs), so file names
 like `named.conf` pass. It is a heuristic: a customer domain under an unlisted generic TLD would
 slip through.
+
+## D-27 Publishing to paneldns-packages with an SSH deploy key (7.10, 7.12)
+
+Spec 7.10 and 7.12 name a fine-grained personal access token (`contents: write` on
+`hostingsimple/paneldns-packages` only). The release workflow uses an **SSH deploy key** with
+write access on that one repository instead (secret `PACKAGES_DEPLOY_KEY`, owner decision
+2026-11-20). Both are least privilege, one repository and write. A deploy key isn't tied to a
+person's account, doesn't expire with a token policy, can be created and revoked through the
+repository's API, and can't be used against any other repository. Rotate it together with the
+signing subkey each year. The job pins `github.com`'s published ed25519 host key
+(`SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU`), and deletes the key file at the end.
+
+## D-28 Release workflow shape (7.10)
+
+- `build` has no secrets. It runs GoReleaser (pinned, checksum-verified) on the tag, after checking
+  that the tag points at a commit on `main`, and checks that the packaged binary equals a plain
+  reproducible `go build`.
+- `attest` has no secrets and attests the tarballs and `.deb` files.
+- `sign-and-publish` is the only job naming `environment: release-signing`, and the only one that
+  reads secrets. It installs `gnupg`, `rpm`, `createrepo-c` and `apt-utils` from the runner's
+  distribution before the key is imported, verifies the artefacts against `SHA256SUMS`, and refuses
+  to run unless `packaging/gpg.key` is a real public key with fingerprint
+  `AAE3B3B1258CAAB0ED1AE1C3697D46A632CB9283`. It imports the subkeys into a throw-away keyring,
+  refusing if the primary secret key is present, since it must stay offline. It then signs the
+  `.rpm` files (checked with `rpmkeys --checksig`), rewrites and signs `SHA256SUMS`, rebuilds and
+  signs the APT metadata (`Valid-Until` 14 days) and the YUM metadata (`repomd.xml.asc`; clients
+  expire it after `metadata_expire=1d`), commits to `paneldns-packages`, creates the GitHub
+  release, and deletes the keyring, passphrase file and deploy key.
+- `attest-signed` has no secrets and attests the signed `.rpm` files and the final `SHA256SUMS`,
+  because signing changes the `.rpm` bytes.
+- The keyless cosign signature of spec 7.10 step 2 is not added. The GitHub attestations are
+  Sigstore-backed and verified with `gh attestation verify`; cosign can be added if wanted.
+- Pre-release tags (containing `-`, e.g. `v0.1.0-p5.1`) publish to a `staging` branch of
+  `paneldns-packages` and create a GitHub pre-release. Pages serves `main` only, so a P5 dry run
+  never reaches customers.
+- Weekly re-sign: `resign-schedule.yml` holds no secret and dispatches `release.yml` with
+  `mode=resign` on the latest non-pre-release tag. That run needs the owner's approval like any
+  signing run. The daily reminders from day 7 (spec 7.10) and the rollback mode (7.12) are not
+  built yet.
+- Pruning keeps the newest 5 versions per architecture and format. "Every version still at or
+  above the minimum supported version" needs the minimum from PanelDNS and is not applied yet.
+- `tools/repocheck workflows` (run in CI and as a unit test over the real workflows) enforces:
+  actions pinned by SHA and images by digest; `permissions:` at the top and on every job; no
+  `pull_request_target`/`workflow_run`; only `release.yml`'s `sign-and-publish` names an
+  environment or reads secrets other than `GITHUB_TOKEN`; `release.yml` has no `pull_request`
+  trigger and every one of its jobs is guarded by `startsWith(github.ref, 'refs/tags/v')`;
+  `actions/setup-go` always runs with `cache: false`.
+
+## D-29 Packages (7.1)
+
+GoReleaser (nfpm) builds `.deb` and `.rpm` for amd64 and arm64. Each installs `/usr/bin/paneldns-agent`,
+`/usr/lib/systemd/system/paneldns-agent.service`, `/etc/paneldns-agent.conf` (a config file, mode
+0640 `root:paneldns-agent`, kept on upgrade), `/var/lib/paneldns-agent` (0700) and the licence
+files. The packages recommend `acl` (for `setfacl`), and the `.rpm` depends on `shadow-utils`.
+The maintainer scripts only create the system user and group, fix the two modes, run
+`systemctl daemon-reload`, restart the unit on upgrade if it is enabled, and stop and disable it
+on removal. They never enable it on a first install (enrol does that), and they make no network
+call. `dpkg --purge` removes the state directory and leaves the user. File times come from the
+commit, so packages and tarballs are reproducible. The package maintainer field is
+`HostingSimple` until the owner names a contact address. `packaging/gpg.key` is a **placeholder**:
+GitHub has no public copy of the key, and the release job refuses to run until the owner commits
+the real public key.

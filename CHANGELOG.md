@@ -6,6 +6,16 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Packaging and releases (t044): GoReleaser/nfpm `.deb` and `.rpm` for linux amd64/arm64 with
+  the systemd unit, sample config and user-creating maintainer scripts; reproducible tarballs
+  with `SHA256SUMS`; `release.yml` (tag-only build, provenance, owner-approved signing job in
+  the `release-signing` environment that signs the packages, checksums and APT/YUM metadata and
+  publishes to `paneldns-packages` with a deploy key); weekly re-sign dispatch; install docs
+  (`docs/INSTALL.md`) and `packaging/install.sh`; a CI job that builds snapshot packages and
+  installs them on Debian, Ubuntu and AlmaLinux; stricter workflow lint.
+
 ### Fixed
 
 - Integration CI: the PowerDNS service image `powerdns/pdns-auth-49:4.9` does not exist; use
