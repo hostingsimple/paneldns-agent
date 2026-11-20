@@ -1,0 +1,2 @@
+example.com: exampleuser==root==main==example.com==/home/exampleuser/public_html==192.0.2.10:80==192.0.2.10:443==0==
+addon.example.net: exampleuser==root==addon==example.com==/home/exampleuser/addon==192.0.2.10:80==

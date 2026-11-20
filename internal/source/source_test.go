@@ -208,8 +208,14 @@ func TestBINDRunning(t *testing.T) {
 		t.Fatalf("running %v pid %d", r, asked)
 	}
 	delete(m, "/run/named/named.pid")
+	active := false
+	b.UnitActive = func(ctx context.Context, unit string) (bool, error) { return active && unit == "bind9.service", nil }
 	if r, _ := b.Running(context.Background()); r != RunningUnknown {
 		t.Fatalf("running %v", r)
+	}
+	active = true
+	if r, d := b.Running(context.Background()); r != RunningYes || !strings.Contains(d, "bind9.service") {
+		t.Fatalf("systemd fallback: %v %s", r, d)
 	}
 }
 

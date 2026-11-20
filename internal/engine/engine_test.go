@@ -84,7 +84,6 @@ type fakeAPI struct {
 	status     map[string]string // forced per-zone status
 	hbResp     *protocol.HeartbeatResponse
 	staleOnce  bool
-	invStatus  int
 	needAlways []string
 }
 

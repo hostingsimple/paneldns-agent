@@ -326,3 +326,17 @@ func (p *stmtParser) parseBlock(nested bool) ([]*Stmt, error) {
 		out = append(out, s)
 	}
 }
+
+// ParseStatements parses one file's statements without following its
+// include statements.
+func ParseStatements(data []byte, file string) ([]*Stmt, error) {
+	if len(data) > MaxFileSize {
+		return nil, fmt.Errorf("%s: larger than %d bytes", file, MaxFileSize)
+	}
+	toks, err := tokenize(data, file)
+	if err != nil {
+		return nil, err
+	}
+	p := &stmtParser{toks: toks, file: file}
+	return p.parseBlock(false)
+}

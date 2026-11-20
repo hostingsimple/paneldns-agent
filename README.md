@@ -17,12 +17,19 @@ and compare the result with the published packages.
 ## How it works
 
 1. `paneldns-agent enrol --url https://app.paneldns.example --code <one-time code>` (as root)
-   detects the zone source, generates an Ed25519 key pair on the server, and sends only the
-   public key with the code.
+   detects the zone source and the panel's owner file, generates an Ed25519 key pair on the
+   server, sends only the public key with the code, grants the `paneldns-agent` user read
+   access through POSIX ACLs (never group membership in `named`, `bind` or `pdns`), runs
+   `--check` as that user and starts the service. `--no-acl` prints the `setfacl` commands
+   instead; `--no-start` leaves the service stopped.
 2. `paneldns-agent run` (the systemd unit) scans the zones every `INTERVAL` seconds, pushes
    changed zones and deletions, sends a heartbeat, and every `RESYNC` seconds sends a full
    inventory of names and content hashes.
-3. `paneldns-agent --check` is a read-only self-test for support.
+3. `paneldns-agent --check` is a read-only self-test: config and file modes, the zone source and
+   view, the first five zones read and hashed, zones the agent can't read, the owner file,
+   PanelDNS reachability, certificate, key, IP allowlist, clock skew and version. It exits 1 on
+   any failure. `--check --zone example.com` prints one zone's canonical text and hash;
+   `--json` gives the report as JSON.
 
 ## What it reads
 
@@ -51,6 +58,19 @@ including the canonical zone text and content hash, in [`docs/PROTOCOL.md`](docs
   as sent. Replays and reordered requests are refused by the server.
 - HTTPS only, certificate always verified. PanelDNS also refuses requests from addresses that
   are not on the server's IP allowlist; the agent says so plainly in its log and in `--check`.
+- The service runs as the `paneldns-agent` user with no capabilities, `NoNewPrivileges`,
+  `ProtectSystem=strict` (only `/var/lib/paneldns-agent` is writable), `ProtectHome=read-only`, a
+  `@system-service` seccomp filter, no access to loopback addresses (so not to rndc), the rndc
+  key and `pdns.conf` made inaccessible, and `MemoryMax=128M`; see
+  [`packaging/systemd/paneldns-agent.service`](packaging/systemd/paneldns-agent.service). When
+  the PowerDNS API or the system resolver is on a loopback address, enrol adds a drop-in with
+  `IPAddressAllow=` for exactly those addresses.
+
+## Owners
+
+The agent reports, per zone, the hosting account that owns it, read from the panel's own owner
+file (never its API): cPanel `/etc/userdomains` (or `/etc/userdatadomains`), DirectAdmin
+`/etc/virtual/domainowners`. Other panels send no owner in this version.
 
 ## Configuration
 
@@ -98,11 +118,13 @@ code to audit in a program that root installs on every hosting server.
 | `internal/backoff/` | Exponential backoff with full jitter |
 | `internal/state/` | Atomic state files in `/var/lib/paneldns-agent` |
 | `internal/protocol/` | Ingest API: wire types, Ed25519 request signing, HTTPS client |
-| `internal/enrol/` | `enrol`: zone-source detection, key generation, enrolment |
+| `internal/enrol/` | `enrol`: detection, key generation, enrolment, read ACLs |
 | `internal/host/` | Host name, OS, panel and public addresses |
+| `internal/owners/` | Panel owner files |
+| `internal/check/` | `--check` |
 | `internal/fixtures/` | Checks and regenerates the shared fixtures in `testdata/` |
 | `internal/version/` | Version string, set at build time |
-| `packaging/` | Sample config (and, later, the systemd unit) |
+| `packaging/` | Sample config and the hardened systemd unit |
 | `docs/` | Protocol and design decisions |
 | `testdata/` | Shared fixtures the PanelDNS app copies and pins by checksum ([README](testdata/README.md)) |
 

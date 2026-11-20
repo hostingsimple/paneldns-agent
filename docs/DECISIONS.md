@@ -178,3 +178,66 @@ On `rotate_key: true` the agent writes the new key to `agent.key.next`, calls `/
 with the old key, and only then renames the new key over `agent.key` and stores the new key id.
 If the agent dies in between, the old key still works (spec: until the new one is used once, or
 24 hours) and the server asks again; a stale `agent.key.next` is removed at start.
+
+## D-20 Owner files (7.3, 18.4 item 4)
+
+cPanel `/etc/userdomains` and DirectAdmin `/etc/virtual/domainowners` are read as `domain: user`
+per line; cPanel's `/etc/userdatadomains` (`domain: user==owner==...`) works too. Domains are
+matched exactly after lower-casing and dropping a trailing dot; cPanel's `* : nobody` catch-all,
+comments, lines without a colon and users that are not 1–64 characters of `A-Za-z0-9._-` are
+skipped. A later line wins. The file is re-read only when its size or mtime changes. Enrol
+picks the file from the detected panel (cPanel, DirectAdmin); other panels send no owner in
+v1. Both formats remain unverified against the owner's servers until prototype P1.
+
+## D-21 Loopback access and the unit drop-in (7.9)
+
+The unit has `IPAddressDeny=localhost`, so the agent can't reach rndc on 127.0.0.1:953. Spec
+7.9 allows `IPAddressAllow=` for the PowerDNS API address. A second case the spec doesn't
+mention: if `/etc/resolv.conf` points at a loopback resolver (systemd-resolved's `127.0.0.53`,
+or a local named at `127.0.0.1`, common on cPanel servers), the agent could not resolve the
+PanelDNS host name at all. Enrol therefore writes
+`/etc/systemd/system/paneldns-agent.service.d/10-paneldns-network.conf` with
+`IPAddressAllow=` for the PowerDNS API host and any loopback nameserver, and removes it when
+neither applies. `IPAddressAllow=` can't name a port, so on a server whose resolver is a local
+named on `127.0.0.1` the agent can reach `127.0.0.1:953` too; it still can't use rndc, because it
+can't read the rndc key (ACLs plus `InaccessiblePaths=`). `--check` reports a failed lookup of
+the PanelDNS host with this hint.
+
+## D-22 Read ACLs (7.1 step 3, 7.9)
+
+Enrol (as root) grants, with `setfacl`, `u:paneldns-agent:r` on named.conf, on every readable
+include except files holding only `key`/`tsig-keygen` statements, on every zone file, existing
+journal and the owner file; `u:paneldns-agent:rx` plus the default ACL `u:paneldns-agent:r` on
+each zone directory (new zone files and journals inherit it); and `u:paneldns-agent:x` on parent
+directories that others can't search. It never adds group membership. If named.conf itself
+holds an inline `key` statement, enrol warns that the agent can read that secret and suggests
+moving it to its own include. `--no-acl` prints the commands instead of running them. Whether a
+panel resets ACLs when it rewrites a zone file is unverified (prototype); `--check` opens every
+zone file as the agent and fails with the list of unreadable ones.
+
+## D-23 Low priority for `named-compilezone` (7.8)
+
+Instead of wrapping each run in `nice 10` and `ionice -c3`, the unit sets `Nice=10` and
+`IOSchedulingClass=idle`, which the agent and every `named-compilezone` child inherit. It needs
+no extra binaries and no `ioprio_set` call inside the seccomp filter. At most two compiles run at
+a time.
+
+## D-24 `--check` (7.7)
+
+`--check` reads the config, the state files, the zone source and the owner file, and sends one
+heartbeat with `"check": true`. It takes a sequence number (under the same lock as the service)
+but never writes `state.json`. It reads the first five zones that would be synced, opens every
+zone file to find ones the agent can't read, and reports the service's last scan, failed,
+refused and signed zones from `state.json`. Clock skew is measured against the HTTP `Date`
+header of the heartbeat answer. Exit status 1 on any FAIL. `--check --zone NAME` only reads that
+zone and prints its canonical text and hash; it makes no network call. Enrol runs `--check` as
+the agent user (not root), so it sees exactly the service's access, and starts the unit only if
+it passes.
+
+## D-25 Is named running? (7.4)
+
+The empty-inventory guard needs to know whether named runs. The agent first reads named's pid
+file and sends signal 0 (EPERM still means the process exists); if the pid file is unreadable,
+which is common because `/run/named` is often private to named, it asks systemd
+(`systemctl is-active` for `named.service`, `named-chroot.service`, `bind9.service`). Unknown
+counts as not running.

@@ -18,6 +18,7 @@ import (
 
 	"github.com/hostingsimple/paneldns-agent/internal/config"
 	"github.com/hostingsimple/paneldns-agent/internal/host"
+	"github.com/hostingsimple/paneldns-agent/internal/owners"
 	"github.com/hostingsimple/paneldns-agent/internal/protocol"
 	"github.com/hostingsimple/paneldns-agent/internal/state"
 	"github.com/hostingsimple/paneldns-agent/internal/version"
@@ -231,6 +232,18 @@ func chownState(dir string) error {
 	})
 }
 
-// DetectAll runs every detection step (the zone source here; the owner
-// file is added in owners.go).
-var DetectAll = func() (Detected, error) { return DetectSource() }
+// DetectAll detects the zone source and the panel's owner file.
+var DetectAll = func() (Detected, error) {
+	d, err := DetectSource()
+	if err != nil {
+		return d, err
+	}
+	panel := host.Panel()
+	d.OwnersFile = owners.Detect(panel, Root)
+	if d.OwnersFile != "" {
+		d.Notes = append(d.Notes, fmt.Sprintf("owner file %s (%s)", d.OwnersFile, panel))
+	} else {
+		d.Notes = append(d.Notes, fmt.Sprintf("no owner file for panel %q; zones are sent without an owner", panel))
+	}
+	return d, nil
+}

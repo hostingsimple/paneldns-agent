@@ -1,0 +1,10 @@
+example.com: exampleuser
+www.example.com: exampleuser
+Shop.Example.NET.: shopuser
+parked.example.net: shopuser
+* : nobody
+broken line without colon
+bad.example.com: user with spaces
+long.example.com: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+# comment

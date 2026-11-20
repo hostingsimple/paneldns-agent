@@ -44,6 +44,9 @@ type BIND struct {
 	Glob     func(string) ([]string, error)
 	Run      func(ctx context.Context, argv []string) (stdout, stderr []byte, err error)
 	Alive    func(pid int) Running
+	// Units and UnitActive replace the systemd fallback of Running.
+	Units      []string
+	UnitActive func(ctx context.Context, unit string) (bool, error)
 
 	mu       sync.Mutex
 	conf     *namedconf.Conf
@@ -374,5 +377,39 @@ func (b *BIND) Running(ctx context.Context) (Running, string) {
 		r := alive(pid)
 		return r, fmt.Sprintf("pid %d from %s", pid, p)
 	}
-	return RunningUnknown, "no readable named pid file"
+	// The pid file's directory is often readable by named only; ask
+	// systemd instead (read-only D-Bus query, no privilege needed).
+	units := b.Units
+	if units == nil {
+		units = []string{"named.service", "named-chroot.service", "bind9.service"}
+	}
+	query := b.UnitActive
+	if query == nil {
+		query = systemdActive
+	}
+	for _, u := range units {
+		if active, err := query(ctx, u); err == nil && active {
+			return RunningYes, "systemd unit " + u + " is active"
+		}
+	}
+	return RunningUnknown, "no readable named pid file and no active named unit"
 }
+
+// systemdActive runs `systemctl is-active --quiet unit`.
+func systemdActive(ctx context.Context, unit string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "systemctl", "is-active", "--quiet", unit)
+	err := cmd.Run()
+	if err == nil {
+		return true, nil
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return false, nil
+	}
+	return false, err
+}
+
+// ZoneFile returns the zone file of a zone listed by this source.
+func (b *BIND) ZoneFile(ref ZoneRef) string { return ref.key }

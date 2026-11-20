@@ -1,0 +1,79 @@
+# paneldns-agent.service: Panel Sync agent for PanelDNS.
+#
+# The agent reads zone data and the panel's owner file (through POSIX ACL
+# read entries granted by `paneldns-agent enrol`) and connects out to
+# PanelDNS over HTTPS. It writes only to /var/lib/paneldns-agent, opens no
+# listening socket, and runs with no capabilities.
+#
+# Local additions (written by enrol when needed) go in
+# /etc/systemd/system/paneldns-agent.service.d/: an IPAddressAllow= for the
+# PowerDNS API address or a resolver on a loopback address. Spec 7.9.
+
+[Unit]
+Description=PanelDNS agent (Panel Sync)
+Documentation=https://github.com/hostingsimple/paneldns-agent
+Wants=network-online.target
+After=network-online.target named.service named-chroot.service bind9.service pdns.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/paneldns-agent run
+Restart=on-failure
+RestartSec=30s
+
+# Identity: a dedicated system user, created by the package.
+User=paneldns-agent
+Group=paneldns-agent
+UMask=0077
+
+# Filesystem: everything read-only except the state directory. /home stays
+# readable because HestiaCP keeps zone files under home directories.
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/var/lib/paneldns-agent
+StateDirectory=paneldns-agent
+StateDirectoryMode=0700
+# Defence in depth on top of the ACLs: key material the agent must never
+# read. A leading "-" ignores paths that don't exist on this server.
+InaccessiblePaths=-/etc/rndc.key -/etc/bind/rndc.key -/etc/named/rndc.key -/etc/rndc.conf -/etc/bind/rndc.conf
+InaccessiblePaths=-/var/named/chroot/etc/rndc.key -/var/named/run-root/etc/rndc.key
+InaccessiblePaths=-/etc/powerdns/pdns.conf -/etc/pdns/pdns.conf -/etc/powerdns/pdns.d -/etc/pdns/pdns.d
+
+# Privileges: none.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+RemoveIPC=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# Network: outbound only. No loopback, so the agent can't reach rndc on
+# 127.0.0.1:953; enrol adds IPAddressAllow= in a drop-in for the PowerDNS
+# API or a loopback resolver when this server needs one.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressDeny=localhost
+
+# Resources (spec 7.8): named-compilezone runs as a child, so it inherits
+# the low CPU and idle I/O priority set here.
+MemoryMax=128M
+TasksMax=64
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

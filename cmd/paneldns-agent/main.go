@@ -17,7 +17,7 @@ const usage = `paneldns-agent: Panel Sync agent for PanelDNS
 Usage:
   paneldns-agent run       [--config FILE]   run the sync loop (systemd ExecStart)
   paneldns-agent --check   [--config FILE] [--zone NAME] [--json]
-  paneldns-agent enrol     --url URL --code CODE [--config FILE]
+  paneldns-agent enrol     --url URL --code CODE [--config FILE] [--no-acl] [--no-start]
   paneldns-agent version
 
 The enrolment code can also be given in the PANELDNS_ENROL_CODE
@@ -42,6 +42,8 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 	switch args[0] {
 	case "run":
 		return cmdRun(args[1:], stderr)
+	case "--check", "check":
+		return cmdCheck(args[1:], stdout, stderr)
 	case "enrol", "enroll":
 		return cmdEnrol(args[1:], stdout, stderr)
 	case "version", "--version", "-v":

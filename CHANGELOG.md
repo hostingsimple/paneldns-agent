@@ -28,3 +28,9 @@ All notable changes to this project are listed here. The format follows
   made where the spec is ambiguous (P-01 to P-20).
 - Shared fixtures in `testdata/`: the Ed25519 request-signing vector and the canonical-hash
   fixture, with `SHA256SUMS` (regenerate with `go test ./internal/fixtures -update`).
+- Owner files and hardening (t043): cPanel `/etc/userdomains` (and `/etc/userdatadomains`) and
+  DirectAdmin `/etc/virtual/domainowners`; the systemd unit with the spec 7.9 hardening
+  (dedicated user, `ProtectSystem=strict`, `NoNewPrivileges`, no capabilities, seccomp filter,
+  no loopback access, key files inaccessible, 128 MB memory cap, idle I/O); enrol grants read
+  ACLs, writes the loopback drop-in when needed, runs `--check` as the agent user and starts
+  the unit; `paneldns-agent --check` (`--zone`, `--json`).

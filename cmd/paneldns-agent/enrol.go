@@ -18,6 +18,8 @@ func cmdEnrol(args []string, stdout, stderr io.Writer) int {
 	code := fs.String("code", "", "one-time enrolment code from the dashboard")
 	configPath := fs.String("config", config.DefaultPath, "config file to write")
 	stateDir := fs.String("state-dir", config.StateDir, "state directory")
+	noACL := fs.Bool("no-acl", false, "print the setfacl commands instead of running them")
+	noStart := fs.Bool("no-start", false, "don't enable and start the service")
 	if fs.Parse(args) != nil {
 		return 2
 	}
@@ -31,7 +33,7 @@ func cmdEnrol(args []string, stdout, stderr io.Writer) int {
 	defer stop()
 	_, err := enrol.Run(ctx, enrol.Options{
 		URL: *url, Code: *code, ConfigPath: *configPath, StateDir: *stateDir, Out: stdout,
-		After: afterEnrol(*configPath, *stateDir, stdout),
+		After: afterEnrol(afterOptions{configPath: *configPath, stateDir: *stateDir, noACL: *noACL, noStart: *noStart, out: stdout}),
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, "paneldns-agent enrol:", err)
