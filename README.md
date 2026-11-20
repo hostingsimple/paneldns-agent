@@ -130,5 +130,7 @@ code to audit in a program that root installs on every hosting server.
 
 ## Licence
 
-Not yet chosen; see the open question in the specification. Until a licence is published, no
-licence is granted.
+SPDX-License-Identifier: Apache-2.0
+
+Copyright 2026 HostingSimple. Licensed under the Apache License, Version 2.0; see
+[`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).

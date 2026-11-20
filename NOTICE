@@ -1,0 +1,5 @@
+paneldns-agent
+Copyright 2026 HostingSimple
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+It has no third-party dependencies outside the Go standard library.

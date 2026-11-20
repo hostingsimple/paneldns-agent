@@ -34,3 +34,4 @@ All notable changes to this project are listed here. The format follows
   no loopback access, key files inaccessible, 128 MB memory cap, idle I/O); enrol grants read
   ACLs, writes the loopback drop-in when needed, runs `--check` as the agent user and starts
   the unit; `paneldns-agent --check` (`--zone`, `--json`).
+- Licence: Apache-2.0 (`LICENSE`, `NOTICE`), copyright HostingSimple.
