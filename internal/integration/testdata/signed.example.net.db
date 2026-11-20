@@ -1,0 +1,4 @@
+$TTL 300
+@	IN SOA	ns1.example.net. hostmaster.example.net. 1 3600 900 604800 300
+	IN NS	ns1.example.net.
+www	IN A	192.0.2.81

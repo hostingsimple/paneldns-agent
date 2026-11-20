@@ -35,3 +35,8 @@ All notable changes to this project are listed here. The format follows
   ACLs, writes the loopback drop-in when needed, runs `--check` as the agent user and starts
   the unit; `paneldns-agent --check` (`--zone`, `--json`).
 - Licence: Apache-2.0 (`LICENSE`, `NOTICE`), copyright HostingSimple.
+- CI (written, not yet run): lint (gofmt, vet, staticcheck, workflow rules), unit tests with
+  `-race` and cross-compiles, govulncheck, a build-twice reproducibility check, a testdata scan
+  for non-documentation names and addresses; integration tests against real `named`,
+  `named-compilezone` and PowerDNS, and an ACL-only access test. Actions pinned by commit SHA.
+  `tools/aclplan` prints the ACL commands enrol would run.

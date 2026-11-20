@@ -1,0 +1,43 @@
+// Integration fixture: @DIR@ is replaced with the test directory.
+include "@DIR@/rndc.key";
+
+options {
+	directory "@DIR@";
+	pid-file "@DIR@/named.pid";
+	listen-on port 5300 { 127.0.0.1; };
+	listen-on-v6 { none; };
+	recursion no;
+	key-directory "@DIR@/keys";
+};
+
+controls { };
+
+zone "inc.example.com" {
+	type primary;
+	file "inc.example.com.db";
+};
+
+zone "bad.example.net" {
+	type primary;
+	file "bad.example.net.db";
+};
+
+zone "dyn.example.com" {
+	type primary;
+	file "dyn.example.com.db";
+	allow-update { 127.0.0.1; };
+};
+
+zone "signed.example.net" {
+	type primary;
+	file "signed.example.net.db";
+	dnssec-policy default;
+	inline-signing no;
+	allow-update { none; };
+};
+
+zone "secondary.example.net" {
+	type secondary;
+	primaries { 192.0.2.53; };
+	file "secondary.example.net.db";
+};

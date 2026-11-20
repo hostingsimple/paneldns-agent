@@ -1,0 +1,130 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: nothing at the top, read-only contents per job.
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  STATICCHECK_VERSION: v0.8.2
+  GOVULNCHECK_VERSION: v1.10.0
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: gofmt
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "$out" ]; then echo "gofmt needed:"; echo "$out"; exit 1; fi
+      - name: go vet
+        run: |
+          go vet ./...
+          go vet -tags integration ./...
+      - name: staticcheck
+        run: go run "honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}" ./...
+      - name: workflow rules (pinned actions, permissions, triggers)
+        run: go run ./tools/repocheck workflows
+
+  test:
+    name: unit tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: go test
+        run: go test -race -count=1 ./...
+      - name: cross-compile linux/amd64 and linux/arm64
+        run: |
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -o /dev/null ./cmd/paneldns-agent
+          done
+
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: govulncheck
+        run: go run "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}" ./...
+
+  reproducible:
+    name: reproducible build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: build twice in different directories and compare
+        run: |
+          set -eu
+          build() { # $1 = source copy, $2 = arch
+            ( cd "$1" && CGO_ENABLED=0 GOOS=linux GOARCH="$2" GOCACHE="$1.cache" \
+                go build -trimpath -ldflags "-s -w -buildid= -X github.com/hostingsimple/paneldns-agent/internal/version.Version=0.0.0-ci" \
+                -o "$1.$2" ./cmd/paneldns-agent )
+          }
+          for d in "$RUNNER_TEMP/a" "$RUNNER_TEMP/b-elsewhere"; do
+            mkdir -p "$d" && cp -a . "$d"
+          done
+          for arch in amd64 arm64; do
+            build "$RUNNER_TEMP/a" "$arch"
+            build "$RUNNER_TEMP/b-elsewhere" "$arch"
+            sha256sum "$RUNNER_TEMP/a.$arch" "$RUNNER_TEMP/b-elsewhere.$arch"
+            cmp "$RUNNER_TEMP/a.$arch" "$RUNNER_TEMP/b-elsewhere.$arch"
+          done
+
+  testdata:
+    name: documentation names only in testdata
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: scan testdata/
+        run: go run ./tools/repocheck testdata
+      - name: shared fixtures and SHA256SUMS up to date
+        run: go test -count=1 ./internal/fixtures

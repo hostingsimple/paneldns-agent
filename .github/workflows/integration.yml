@@ -1,0 +1,92 @@
+name: integration
+
+# Container tests against real software (spec 17): named and
+# named-compilezone from the distribution's BIND 9 packages, PowerDNS as a
+# service container, and file access through ACLs only.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    name: BIND and PowerDNS
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      pdns:
+        # TODO(t044): pin by digest once the image digest has been reviewed.
+        image: powerdns/pdns-auth-49:4.9
+        env:
+          PDNS_AUTH_API_KEY: test-only-key
+        ports:
+          - 127.0.0.1:8081:8081
+    env:
+      PDNS_TEST_URL: http://127.0.0.1:8081
+      PDNS_TEST_KEY: test-only-key
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: install BIND 9 and acl
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends bind9 bind9-utils bind9-dnsutils acl
+          sudo systemctl stop named || sudo systemctl stop bind9 || true
+          # Ubuntu's AppArmor profile confines named to /etc/bind and
+          # /var/cache/bind; the test runs its own named in a temp dir.
+          if [ -f /etc/apparmor.d/usr.sbin.named ]; then
+            sudo apparmor_parser -R /etc/apparmor.d/usr.sbin.named || true
+          fi
+          named -v
+          named-compilezone -v || true
+
+      - name: wait for PowerDNS
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS -H "X-API-Key: $PDNS_TEST_KEY" "$PDNS_TEST_URL/api/v1/servers/localhost" >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "PowerDNS API did not come up"; exit 1
+
+      - name: readers against named-compilezone, named and PowerDNS
+        run: go test -tags integration -count=1 -v ./internal/integration/
+
+      - name: zone access through ACLs only (rndc key unreadable)
+        run: |
+          set -eu
+          go test -c -tags integration -o "$RUNNER_TEMP/integration.test" ./internal/integration/
+          go build -o "$RUNNER_TEMP/aclplan" ./tools/aclplan
+          sudo install -m 0755 "$RUNNER_TEMP/integration.test" /usr/local/bin/paneldns-integration.test
+          sudo install -m 0755 "$RUNNER_TEMP/aclplan" /usr/local/bin/paneldns-aclplan
+          sudo useradd --system --no-create-home --shell /usr/sbin/nologin paneldns-agent
+          sudo mkdir -p /srv/acl/inc /srv/acl/keys
+          sed 's#@DIR@#/srv/acl#g' internal/integration/testdata/named.conf.in | sudo tee /srv/acl/named.conf >/dev/null
+          sudo cp internal/integration/testdata/*.db internal/integration/testdata/rndc.key /srv/acl/
+          sudo cp internal/integration/testdata/inc/www.db /srv/acl/inc/
+          sudo chown -R root:root /srv/acl
+          sudo chmod 0750 /srv/acl /srv/acl/inc /srv/acl/keys
+          sudo find /srv/acl -type f -exec chmod 0640 {} +
+          sudo chmod 0600 /srv/acl/rndc.key
+          printf 'PANELDNS_URL=https://app.example.com\nZONES_FILE=/srv/acl/named.conf\n' | sudo tee /srv/acl/paneldns-agent.conf >/dev/null
+          sudo paneldns-aclplan /srv/acl/paneldns-agent.conf | tee "$RUNNER_TEMP/acl.sh"
+          sudo sh -x "$RUNNER_TEMP/acl.sh"
+          getfacl -R /srv/acl 2>/dev/null | head -60 || true
+          cd /
+          sudo -u paneldns-agent env PANELDNS_ACL_TEST_CONF=/srv/acl/named.conf /usr/local/bin/paneldns-integration.test -test.run TestACLAccess -test.v

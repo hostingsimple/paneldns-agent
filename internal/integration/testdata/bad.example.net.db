@@ -1,0 +1,6 @@
+; named refuses this zone: an underscore in an address owner fails
+; check-names, which defaults to fail for a primary zone.
+$TTL 300
+@		IN SOA	ns1.example.net. hostmaster.example.net. 1 3600 900 604800 300
+		IN NS	ns1.example.net.
+bad_name	IN A	192.0.2.5

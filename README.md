@@ -95,14 +95,25 @@ and Go version give the same bytes.
 ```sh
 go vet ./...
 go test ./...
-gofmt -l .        # must print nothing
+gofmt -l .                          # must print nothing
+go run ./tools/repocheck testdata   # documentation names and addresses only
+go test -tags integration ./internal/integration/ -v   # needs BIND 9 and PowerDNS; see CI
 ```
+
+CI (`.github/workflows/`) also runs staticcheck, govulncheck, a reproducibility build and the
+integration tests against real `named`, `named-compilezone` and PowerDNS.
 
 ## Dependencies
 
-None outside the Go standard library. `crypto/ed25519`, `crypto/sha256`, `compress/gzip`,
-`net/http` and `encoding/json` cover everything the agent needs. Fewer dependencies means less
-code to audit in a program that root installs on every hosting server.
+None outside the Go standard library (`go.mod` has no `require`). `crypto/ed25519`,
+`crypto/sha256`, `crypto/x509` (PKCS #8 key file), `compress/gzip`, `net/http` and
+`encoding/json` cover everything the agent needs. The zone and named.conf parsers are written
+here rather than taken from `github.com/miekg/dns`, because the canonical hash must be
+reproduced exactly by the PanelDNS (PHP) side from a short written rule set, not from a
+library's presentation format (see `docs/DECISIONS.md` D-01). Fewer dependencies also means
+less code to audit in a program that root installs on every hosting server. CI tools
+(staticcheck, govulncheck) are run at pinned versions with `go run` and are not dependencies of
+the agent.
 
 ## Repository layout
 
@@ -124,6 +135,9 @@ code to audit in a program that root installs on every hosting server.
 | `internal/check/` | `--check` |
 | `internal/fixtures/` | Checks and regenerates the shared fixtures in `testdata/` |
 | `internal/version/` | Version string, set at build time |
+| `internal/integration/` | Tests against real BIND 9 and PowerDNS (`-tags integration`) |
+| `tools/repocheck/` | CI rules: testdata scan, workflow pinning and permissions |
+| `tools/aclplan/` | Prints the read-ACL commands enrol would run |
 | `packaging/` | Sample config and the hardened systemd unit |
 | `docs/` | Protocol and design decisions |
 | `testdata/` | Shared fixtures the PanelDNS app copies and pins by checksum ([README](testdata/README.md)) |

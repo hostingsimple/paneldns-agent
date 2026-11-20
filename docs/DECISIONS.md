@@ -241,3 +241,29 @@ file and sends signal 0 (EPERM still means the process exists); if the pid file 
 which is common because `/run/named` is often private to named, it asks systemd
 (`systemctl is-active` for `named.service`, `named-chroot.service`, `bind9.service`). Unknown
 counts as not running.
+
+## D-26 CI (7.11, 17)
+
+`ci.yml`: gofmt, `go vet` (also with the `integration` tag), staticcheck, the workflow rules,
+unit tests with `-race`, a linux/amd64 and linux/arm64 cross-compile, govulncheck, a
+reproducibility job that builds both architectures from two copies of the tree in different
+directories with separate build caches and compares the bytes, and the testdata scan plus the
+shared-fixture check. `integration.yml` installs the distribution's BIND 9 (`named`,
+`named-compilezone`, `nsupdate`) on the runner rather than using a BIND service container,
+because the tests need `named-compilezone` locally and the fixture files mounted before the
+container starts, which service containers can't do; PowerDNS runs as a service container
+(`powerdns/pdns-auth-49`, API key from `PDNS_AUTH_API_KEY`). The image is pinned by tag for now;
+pin it by digest when packaging lands (t044). Actions are pinned by commit SHA, every workflow
+has `permissions: {}` at the top and `contents: read` per job, `actions/setup-go` runs with
+`cache: false`, and checkout keeps no credentials. `tools/repocheck workflows` enforces the pins,
+the top-level permissions, no `pull_request_target`/`workflow_run`, and no `environment:` outside
+`release.yml`.
+
+`tools/repocheck testdata` scans every `testdata/` directory: IPv4 addresses must be in
+`192.0.2.0/24` or loopback; IPv6 in `2001:db8::/32`, `::1` or `::`; names must end in
+`example.com`, `example.net` or a reserved TLD (`example`, `test`, `invalid`, `localhost`,
+`localdomain`, `local`), and `.arpa` names must be reverse zones of documentation, loopback or
+private space. Other dotted words count as names only if the last label is a known TLD (every
+two-letter label except common file extensions, plus a list of generic TLDs), so file names
+like `named.conf` pass. It is a heuristic: a customer domain under an unlisted generic TLD would
+slip through.
