@@ -107,7 +107,7 @@ nfpms:
     overrides:
       rpm:
         # useradd/groupadd for the preinstall script.
-        depends: [shadow-utils]
+        dependencies: [shadow-utils]
     rpm:
       group: System Environment/Daemons
       summary: PanelDNS agent for Panel Sync
