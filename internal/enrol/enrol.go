@@ -18,6 +18,7 @@ import (
 
 	"github.com/hostingsimple/paneldns-agent/internal/config"
 	"github.com/hostingsimple/paneldns-agent/internal/host"
+	"github.com/hostingsimple/paneldns-agent/internal/namedconf"
 	"github.com/hostingsimple/paneldns-agent/internal/owners"
 	"github.com/hostingsimple/paneldns-agent/internal/protocol"
 	"github.com/hostingsimple/paneldns-agent/internal/state"
@@ -39,6 +40,9 @@ type Options struct {
 	HTTP         *http.Client
 	Detect       func() (Detected, error)
 	SkipRootTest bool
+	// Preflight checks the detected setup before PanelDNS is contacted;
+	// nil runs RefuseInlineKeys.
+	Preflight func(cfg config.Config) error
 	// After runs once the source is enrolled (ACLs, --check, unit).
 	After func(ctx context.Context, cfg config.Config, d Detected) error
 }
@@ -111,6 +115,14 @@ func Run(ctx context.Context, o Options) (*Result, error) {
 	cfg, err := config.Parse(newText)
 	if err != nil {
 		return nil, fmt.Errorf("the detected configuration is not valid: %w", err)
+	}
+
+	preflight := o.Preflight
+	if preflight == nil {
+		preflight = RefuseInlineKeys
+	}
+	if err := preflight(cfg); err != nil {
+		return nil, err
 	}
 
 	if err := os.MkdirAll(o.StateDir, 0o700); err != nil {
@@ -246,4 +258,19 @@ var DetectAll = func() (Detected, error) {
 		d.Notes = append(d.Notes, fmt.Sprintf("no owner file for panel %q; zones are sent without an owner", panel))
 	}
 	return d, nil
+}
+
+// RefuseInlineKeys fails when named.conf, or an include that holds other
+// configuration, contains a key statement: the agent must read those
+// files, so it would see the secret (spec 7.9, docs/DECISIONS.md D-22).
+func RefuseInlineKeys(cfg config.Config) error {
+	if cfg.ZoneSource != config.SourceBIND {
+		return nil
+	}
+	l := &namedconf.Loader{ReadFile: readRooted, Glob: globRooted, Chroot: cfg.Chroot}
+	conf, err := namedconf.Read(l, cfg.ZonesFile, cfg.View)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", cfg.ZonesFile, err)
+	}
+	return namedconf.InlineKeyError(conf.InlineKeys)
 }

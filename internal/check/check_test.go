@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hostingsimple/paneldns-agent/internal/config"
+	"github.com/hostingsimple/paneldns-agent/internal/namedconf"
 	"github.com/hostingsimple/paneldns-agent/internal/owners"
 	"github.com/hostingsimple/paneldns-agent/internal/protocol"
 	"github.com/hostingsimple/paneldns-agent/internal/source"
@@ -199,5 +200,25 @@ func TestCheckZone(t *testing.T) {
 	env.Zone = "missing.example.com"
 	if r := Run(context.Background(), env); !strings.Contains(messages(r, Fail), "not a primary zone") {
 		t.Fatal("missing zone not reported")
+	}
+}
+
+type inlineKeySrc struct{ *fakeSrc }
+
+func (s inlineKeySrc) List(ctx context.Context) (*source.Listing, error) {
+	l, err := s.fakeSrc.List(ctx)
+	if err == nil {
+		l.InlineKey = namedconf.InlineKeyError([]namedconf.KeyRef{{File: "/etc/named.conf", Line: 12, Name: "rndc-key"}})
+	}
+	return l, err
+}
+
+func TestCheckRefusesInlineKey(t *testing.T) {
+	env := baseEnv(t)
+	env.State.Zones = map[string]*state.Zone{}
+	env.Source = inlineKeySrc{env.Source.(*fakeSrc)}
+	r := Run(context.Background(), env)
+	if !r.Failed() || !strings.Contains(messages(r, Fail), `/etc/named.conf:12 (key "rndc-key")`) || !strings.Contains(messages(r, Fail), "separate file") {
+		t.Fatalf("inline key not refused:\n%s", messages(r, Fail))
 	}
 }

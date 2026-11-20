@@ -57,6 +57,9 @@ func PlanACLs(cfg config.Config) (*ACLPlan, error) {
 		if err != nil {
 			return nil, err
 		}
+		if err := namedconf.InlineKeyError(conf.InlineKeys); err != nil {
+			return nil, err
+		}
 		files := []string{cfg.ZonesFile}
 		for _, inc := range conf.Includes {
 			if inc.Readable {
@@ -68,12 +71,10 @@ func PlanACLs(cfg config.Config) (*ACLPlan, error) {
 			if err != nil {
 				return nil, err
 			}
-			switch {
-			case hasKey && f != cfg.ZonesFile && !hasOther:
+			if hasKey && f != cfg.ZonesFile && !hasOther {
+				// A separate key file: never readable by the agent.
 				p.Skipped = append(p.Skipped, f)
 				continue
-			case hasKey:
-				p.Warnings = append(p.Warnings, fmt.Sprintf("%s contains a key statement next to other configuration; the agent can read that secret. Move key statements to their own file and include it", f))
 			}
 			read[f] = true
 		}

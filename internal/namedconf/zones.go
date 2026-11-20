@@ -1,6 +1,7 @@
 package namedconf
 
 import (
+	"errors"
 	"fmt"
 	"path"
 	"sort"
@@ -36,6 +37,8 @@ type Conf struct {
 	Includes []Include
 	// PidFile is named's pid file as a host path ("" = named's default).
 	PidFile string
+	// InlineKeys are key statements in files the agent reads.
+	InlineKeys []KeyRef
 }
 
 // Read loads named.conf at hostPath and resolves the zones of view (""
@@ -50,7 +53,7 @@ func Read(l *Loader, hostPath, view string) (*Conf, error) {
 
 // Resolve works out directory, view and zones from parsed statements.
 func Resolve(stmts []*Stmt, l *Loader, hostPath, wantView string) (*Conf, error) {
-	c := &Conf{OtherViews: map[string][]string{}, Includes: l.Includes}
+	c := &Conf{OtherViews: map[string][]string{}, Includes: l.Includes, InlineKeys: l.InlineKeys}
 	opts := Find(stmts, "options")
 	var optBlock []*Stmt
 	if opts != nil {
@@ -262,4 +265,19 @@ func integrity(zone, view, opts []*Stmt) string {
 		return "local-sibling"
 	}
 	return "local"
+}
+
+// ErrInlineKey means a key secret sits in a file the agent must read.
+var ErrInlineKey = errors.New("named.conf holds a key secret in a file the agent reads")
+
+// InlineKeyError explains which key statements to move, or returns nil.
+func InlineKeyError(keys []KeyRef) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	locs := make([]string, len(keys))
+	for i, k := range keys {
+		locs[i] = k.String()
+	}
+	return fmt.Errorf("%w: %s. Move each key statement into a separate file that holds only key statements (for example /etc/named.keys.conf, mode 0640 root:named), include that file from named.conf, and don't grant paneldns-agent read access to it", ErrInlineKey, strings.Join(locs, ", "))
 }

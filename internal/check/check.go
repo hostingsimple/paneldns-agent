@@ -234,6 +234,9 @@ func checkBackend(ctx context.Context, r *Result, env Env, cfg config.Config) *s
 	for _, w := range listing.Warnings {
 		r.add("zones", Warn, "%s", w)
 	}
+	if listing.InlineKey != nil {
+		r.add("zones", Fail, "%v", listing.InlineKey)
+	}
 	for _, u := range listing.Unreadable {
 		r.add("zones", Info, "not readable (expected for key files): %s", u)
 	}
