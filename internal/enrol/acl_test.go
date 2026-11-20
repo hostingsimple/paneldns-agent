@@ -1,6 +1,7 @@
 package enrol
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hostingsimple/paneldns-agent/internal/config"
+	"github.com/hostingsimple/paneldns-agent/internal/namedconf"
 )
 
 type modeFI struct{ mode fs.FileMode }
@@ -93,18 +95,65 @@ zone "example.net" { type master; file "/var/named/hosted/example.net.db"; };`,
 	}
 }
 
-func TestPlanACLsInlineKeyWarns(t *testing.T) {
-	withRoot(t, map[string]string{
-		"/etc/named.conf": `key "rndc-key" { secret "c2VjcmV0"; }; options { directory "/var/named"; };`,
-	})
-	cfg := config.Defaults()
-	cfg.ZonesFile = "/etc/named.conf"
-	p, err := PlanACLs(cfg)
-	if err != nil {
-		t.Fatal(err)
+func TestInlineKeysRefused(t *testing.T) {
+	tests := []struct {
+		name  string
+		files map[string]string
+		want  string // "" = accepted
+	}{
+		{"key in named.conf", map[string]string{
+			"/etc/named.conf": `options { directory "/var/named"; };
+key "rndc-key" { secret "c2VjcmV0"; };`,
+		}, `/etc/named.conf:2 (key "rndc-key")`},
+		{"key in an include with zones", map[string]string{
+			"/etc/named.conf": `include "/etc/named.zones.conf";`,
+			"/etc/named.zones.conf": `zone "example.com" { type master; file "a.db"; };
+key "tsig-example" { secret "c2VjcmV0"; };`,
+		}, `/etc/named.zones.conf:2 (key "tsig-example")`},
+		{"key inside a view", map[string]string{
+			"/etc/named.conf": `view "external" { key "xfer" { secret "c2VjcmV0"; }; zone "example.com" { type master; file "a.db"; }; };`,
+		}, `(key "xfer")`},
+		{"separate key file is fine", map[string]string{
+			"/etc/named.conf": `include "/etc/rndc.key"; controls { inet 127.0.0.1 allow { 127.0.0.1; } keys { "rndc-key"; key; }; };`,
+			"/etc/rndc.key":   `key "rndc-key" { secret "c2VjcmV0"; };`,
+		}, ""},
 	}
-	if len(p.Warnings) != 1 || !strings.Contains(p.Warnings[0], "key statement") {
-		t.Fatalf("warnings %v", p.Warnings)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			withRoot(t, tt.files)
+			cfg := config.Defaults()
+			cfg.ZonesFile = "/etc/named.conf"
+			errs := []error{RefuseInlineKeys(cfg)}
+			_, err := PlanACLs(cfg)
+			errs = append(errs, err)
+			for i, err := range errs {
+				if tt.want == "" {
+					if err != nil {
+						t.Fatalf("%d: %v", i, err)
+					}
+					continue
+				}
+				if !errors.Is(err, namedconf.ErrInlineKey) || !strings.Contains(err.Error(), tt.want) || !strings.Contains(err.Error(), "separate file") {
+					t.Fatalf("%d: want inline-key error naming %s, got %v", i, tt.want, err)
+				}
+			}
+		})
+	}
+}
+
+func TestEnrolRefusesInlineKeyBeforeContactingPanelDNS(t *testing.T) {
+	withRoot(t, map[string]string{"/etc/named.conf": `key "k" { secret "c2VjcmV0"; }; zone "example.com" { type master; file "a.db"; };`})
+	dir := t.TempDir()
+	_, err := Run(context.Background(), Options{
+		URL: "https://app.example.com", Code: "x", ConfigPath: filepath.Join(dir, "c.conf"), StateDir: filepath.Join(dir, "s"),
+		SkipRootTest: true,
+		Detect:       func() (Detected, error) { return Detected{ZoneSource: "bind", ZonesFile: "/etc/named.conf"}, nil },
+	})
+	if !errors.Is(err, namedconf.ErrInlineKey) || !strings.Contains(err.Error(), "/etc/named.conf:1") {
+		t.Fatalf("got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "s")); err == nil {
+		t.Fatal("state directory created although enrolment was refused")
 	}
 }
 

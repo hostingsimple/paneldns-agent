@@ -90,6 +90,7 @@ func (b *BIND) List(ctx context.Context) (*Listing, error) {
 	out := &Listing{
 		Backend: "bind", View: conf.View, Directory: conf.Directory,
 		Skipped: conf.Skipped, Other: conf.OtherViews,
+		InlineKey: namedconf.InlineKeyError(conf.InlineKeys),
 	}
 	for _, inc := range conf.Includes {
 		if !inc.Readable {

@@ -77,6 +77,54 @@ type Loader struct {
 	MaxDepth int
 
 	Includes []Include
+	// InlineKeys are key statements in files that also hold other
+	// configuration (or in the main named.conf): files the agent must
+	// read, so it would see the secret (docs/DECISIONS.md D-22).
+	InlineKeys []KeyRef
+
+	main string
+}
+
+// KeyRef locates a key statement.
+type KeyRef struct {
+	File string
+	Line int
+	Name string
+}
+
+func (k KeyRef) String() string { return fmt.Sprintf("%s:%d (key %q)", k.File, k.Line, k.Name) }
+
+func isKeyStmt(s *Stmt) bool { return s.Name() == "key" || s.Name() == "tsig-keygen" }
+
+// KeyStatements returns the key statements of one file's own statements:
+// at top level and directly inside view blocks (not names inside other
+// blocks, such as the key list of a controls statement).
+func KeyStatements(stmts []*Stmt) []KeyRef {
+	var out []KeyRef
+	for _, s := range stmts {
+		switch {
+		case isKeyStmt(s):
+			out = append(out, KeyRef{File: s.File, Line: s.Line, Name: s.Arg(1)})
+		case s.Name() == "view" && s.HasBlock:
+			for _, v := range s.Block {
+				if isKeyStmt(v) {
+					out = append(out, KeyRef{File: v.File, Line: v.Line, Name: v.Arg(1)})
+				}
+			}
+		}
+	}
+	return out
+}
+
+// OnlyKeys reports whether a file's own statements are only key and
+// include statements: a separate key file, which the agent never reads.
+func OnlyKeys(stmts []*Stmt) bool {
+	for _, s := range stmts {
+		if !isKeyStmt(s) && s.Name() != "include" {
+			return false
+		}
+	}
+	return true
 }
 
 // MaxFileSize caps any one config file.
@@ -94,6 +142,7 @@ func (l *Loader) Load(hostPath string) ([]*Stmt, error) {
 	if err != nil {
 		return nil, err
 	}
+	l.main = hostPath
 	return l.parseFile(b, hostPath, path.Dir(hostPath), 0, map[string]bool{hostPath: true})
 }
 
@@ -120,6 +169,9 @@ func (l *Loader) parseFile(data []byte, file, baseDir string, depth int, seen ma
 	stmts, err := p.parseBlock(false)
 	if err != nil {
 		return nil, err
+	}
+	if keys := KeyStatements(stmts); len(keys) > 0 && (file == l.main || !OnlyKeys(stmts)) {
+		l.InlineKeys = append(l.InlineKeys, keys...)
 	}
 	return l.expandIncludes(stmts, baseDir, depth, seen)
 }

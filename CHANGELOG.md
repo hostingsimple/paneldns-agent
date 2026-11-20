@@ -15,6 +15,14 @@ All notable changes to this project are listed here. The format follows
   agent couldn't read zones that include other files. Includes outside named's directory and
   the zone directories, or at key material, are refused (DECISIONS D-22).
 
+### Changed
+
+- An inline `key` statement in named.conf, or in an include that also holds other configuration,
+  is now refused instead of warned about: enrolment stops before contacting PanelDNS, and
+  `--check` fails, naming the file and line and telling you to move the key into a separate
+  include the agent doesn't read (DECISIONS D-22).
+- D-21: the loopback-resolver residual risk is recorded as accepted by the owner.
+
 ### Added
 
 - Repository skeleton: Go module, command, configuration reader and writer, sample

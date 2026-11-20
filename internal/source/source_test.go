@@ -292,3 +292,21 @@ func TestPowerDNS(t *testing.T) {
 		t.Fatalf("down server running %v", r)
 	}
 }
+
+func TestBINDListingReportsInlineKey(t *testing.T) {
+	m := newFS()
+	m.put("/etc/named.conf", namedConf+`key "xfer-key" { algorithm hmac-sha256; secret "c2VjcmV0"; };`+"\n")
+	b := m.bind(&BIND{ConfFile: "/etc/named.conf", NoCompilezone: true})
+	l, err := b.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.InlineKey == nil || !strings.Contains(l.InlineKey.Error(), `/etc/named.conf:8 (key "xfer-key")`) {
+		t.Fatalf("inline key: %v", l.InlineKey)
+	}
+	// The separate, unreadable /etc/rndc.key of newFS is not inline.
+	m.put("/etc/named.conf", namedConf)
+	if l, _ := b.List(context.Background()); l.InlineKey != nil {
+		t.Fatalf("false positive: %v", l.InlineKey)
+	}
+}

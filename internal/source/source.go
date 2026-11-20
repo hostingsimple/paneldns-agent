@@ -31,7 +31,10 @@ type Listing struct {
 	Other     map[string][]string // zones only in other views -> views
 	// Unreadable lists config files (includes) that could not be read.
 	Unreadable []string
-	Warnings   []string
+	// InlineKey is non-nil when a key secret sits in a config file the
+	// agent reads (BIND); --check and enrol refuse that setup.
+	InlineKey error
+	Warnings  []string
 }
 
 // Running is what a source knows about its DNS server's process.

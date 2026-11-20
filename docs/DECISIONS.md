@@ -203,15 +203,17 @@ named on `127.0.0.1` the agent can reach `127.0.0.1:953` too; it still can't use
 can't read the rndc key (ACLs plus `InaccessiblePaths=`). `--check` reports a failed lookup of
 the PanelDNS host with this hint.
 
+**Accepted** by the owner (2026-11-20): on a server whose resolver is a local named on
+`127.0.0.1`, the agent can reach `127.0.0.1:953`; that residual risk is accepted, since the rndc
+key stays unreadable.
+
 ## D-22 Read ACLs (7.1 step 3, 7.9)
 
 Enrol (as root) grants, with `setfacl`, `u:paneldns-agent:r` on named.conf, on every readable
 include except files holding only `key`/`tsig-keygen` statements, on every zone file, existing
 journal and the owner file; `u:paneldns-agent:rx` plus the default ACL `u:paneldns-agent:r` on
 each zone directory (new zone files and journals inherit it); and `u:paneldns-agent:x` on parent
-directories that others can't search. It never adds group membership. If named.conf itself
-holds an inline `key` statement, enrol warns that the agent can read that secret and suggests
-moving it to its own include. `--no-acl` prints the commands instead of running them. Whether a
+directories that others can't search. It never adds group membership. `--no-acl` prints the commands instead of running them. Whether a
 panel resets ACLs when it rewrites a zone file is unverified (prototype); `--check` opens every
 zone file as the agent and fails with the list of unreadable ones.
 
@@ -225,6 +227,17 @@ the key files the unit makes inaccessible or a `.private` DNSSEC key; and any in
 content holds key material (a `key`/`tsig-keygen` statement, a `secret "..."`, or
 `Private-key-format:`). Public `K*.key` DNSKEY files are allowed. An include that can't be read
 even as root is a warning: that zone fails to read and is reported, but enrolment goes on.
+
+**Inline keys are refused** (owner decision, 2026-11-20; it replaced a warning). A `key` (or
+`tsig-keygen`) statement, at top level or directly inside a `view`, in the main named.conf or in
+an include that also holds other configuration, sits in a file the agent must read, so the agent
+would see the secret. Enrol refuses before it contacts PanelDNS (nothing is written, the code is
+not used), the ACL plan refuses, and `--check` fails; the message names each file and line and
+says to move the key into a separate file holding only key statements, included from named.conf
+and not readable by `paneldns-agent`. Such a key-only include is the supported setup and is never
+flagged, even when `--check` runs as root and can read it. Key names inside other blocks (for
+example the `keys { ... }` list of `controls`) are references, not secrets, and are ignored. The
+running service does not stop on an inline key; it never sends config contents anyway.
 
 ## D-23 Low priority for `named-compilezone` (7.8)
 

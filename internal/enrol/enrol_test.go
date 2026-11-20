@@ -49,7 +49,7 @@ func TestEnrolWritesFiles(t *testing.T) {
 	afterCalled := false
 	res, err := Run(context.Background(), Options{
 		URL: srv.URL + "/", Code: " abcd efgh ", ConfigPath: confPath, StateDir: stateDir, Out: &out,
-		HTTP: srv.Client(), SkipRootTest: true,
+		HTTP: srv.Client(), SkipRootTest: true, Preflight: func(config.Config) error { return nil },
 		Detect: func() (Detected, error) {
 			return Detected{ZoneSource: "bind", ZonesFile: "/etc/bind/named.conf", OwnersFile: "/etc/virtual/domainowners"}, nil
 		},
@@ -127,7 +127,7 @@ func TestEnrolErrors(t *testing.T) {
 			dir := t.TempDir()
 			_, err := Run(context.Background(), Options{
 				URL: url, Code: tt.code, ConfigPath: filepath.Join(dir, "c.conf"), StateDir: filepath.Join(dir, "s"),
-				HTTP: srv.Client(), SkipRootTest: true, Detect: detect,
+				HTTP: srv.Client(), SkipRootTest: true, Detect: detect, Preflight: func(config.Config) error { return nil },
 			})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("want %q, got %v", tt.want, err)
