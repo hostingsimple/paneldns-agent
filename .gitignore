@@ -1,0 +1,24 @@
+# Build output
+/dist/
+/bin/
+/paneldns-agent
+/paneldns-agent-*
+*.exe
+*.test
+*.out
+coverage.*
+
+# Local agent state from manual runs (never commit keys or state)
+agent.key
+agent.key.next
+identity.json
+state.json
+sequence.json
+pdns-api-key
+
+# Editors and OS files
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
