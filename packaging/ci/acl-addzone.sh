@@ -12,3 +12,9 @@ addzone() {
 	sudo chmod 0600 "/srv/acl/$1.db"
 	sudo chown nobody:"$(id -gn nobody)" "/srv/acl/$1.db"
 }
+
+# hasacl FILE LINE fails unless `getfacl -c FILE` has exactly that line.
+hasacl() {
+	acl="$(sudo getfacl -c "$1")"
+	printf '%s\n' "$acl" | grep -qx -- "$2" || { printf '%s\n' "$acl"; echo "$1: no ACL line $2" >&2; return 1; }
+}
