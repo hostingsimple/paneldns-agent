@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -220,5 +221,77 @@ func TestCheckRefusesInlineKey(t *testing.T) {
 	r := Run(context.Background(), env)
 	if !r.Failed() || !strings.Contains(messages(r, Fail), `/etc/named.conf:12 (key "rndc-key")`) || !strings.Contains(messages(r, Fail), "separate file") {
 		t.Fatalf("inline key not refused:\n%s", messages(r, Fail))
+	}
+}
+
+func TestCheckACLWatcher(t *testing.T) {
+	dir := filepath.ToSlash(t.TempDir())
+	os.MkdirAll(dir+"/hosted", 0o755)
+	os.WriteFile(dir+"/named.conf", []byte(`options { directory "`+dir+`"; };
+zone "example.com" { type master; file "example.com.db"; };
+zone "example.net" { type master; file "`+dir+`/hosted/example.net.db"; };`), 0o644)
+	os.WriteFile(dir+"/example.com.db", []byte(zone), 0o644)
+	os.WriteFile(dir+"/hosted/example.net.db", []byte(zone), 0o644)
+	dropIn := dir + "/watch.conf"
+	tests := []struct {
+		name            string
+		active, enabled string
+		err             error
+		watched         string // drop-in contents ("" = missing)
+		status          Status
+		want            string
+	}{
+		{"active and watching all", "active", "enabled", nil, "[Path]\nPathChanged=" + dir + "\nPathChanged=" + dir + "/hosted\n", OK, "ACL watcher paneldns-agent-acl.path: active, enabled"},
+		{"inactive", "inactive", "disabled", errors.New("exit status 3"), "", Warn, "inactive, disabled; zone files the panel creates may stay unreadable"},
+		{"not installed", "inactive", "Failed to get unit file state for paneldns-agent-acl.path: No such file or directory", errors.New("exit 1"), "", Warn, "inactive, not installed"},
+		{"failed (trigger limit)", "failed", "enabled", errors.New("exit status 3"), "", Warn, "systemctl enable --now paneldns-agent-acl.path"},
+		{"a zone directory not watched", "active", "enabled", nil, "[Path]\nPathChanged=" + dir + "\n", Warn, "zone directories the ACL watcher doesn't watch: " + dir + "/hosted; as root run: paneldns-agent fix-acls"},
+		{"no systemd", "", "", errors.New(`exec: "systemctl": executable file not found`), "", Info, "can't ask systemd"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if runtime.GOOS == "windows" && tt.watched != "" {
+				t.Skip("named.conf paths with a drive letter don't resolve like Unix paths")
+			}
+			env := baseEnv(t)
+			env.Source = &source.BIND{ConfFile: dir + "/named.conf"}
+			env.Systemctl = func(args ...string) (string, error) {
+				if args[1] != ACLPathUnit {
+					t.Errorf("asked about %v", args)
+				}
+				if args[0] == "is-active" {
+					return tt.active, tt.err
+				}
+				return tt.enabled, tt.err
+			}
+			os.Remove(dropIn)
+			if tt.watched != "" {
+				os.WriteFile(dropIn, []byte(tt.watched), 0o644)
+			}
+			env.WatchDropIn, env.ReadFile = dropIn, os.ReadFile
+			r := Run(context.Background(), env)
+			if got := messages(r, tt.status); !strings.Contains(got, tt.want) {
+				t.Fatalf("%s messages lack %q:\n%s", tt.status, tt.want, got)
+			}
+			for _, i := range r.Items {
+				if i.Status == Fail && strings.Contains(i.Message, "ACL watcher") {
+					t.Fatalf("watcher state must not fail --check: %s", i.Message)
+				}
+			}
+		})
+	}
+}
+
+func TestCheckUnreadableHintNamesFixACLs(t *testing.T) {
+	env := baseEnv(t)
+	dir := filepath.ToSlash(t.TempDir())
+	os.WriteFile(dir+"/named.conf", []byte(`options { directory "`+dir+`"; };
+zone "example.com" { type master; file "example.com.db"; };`), 0o644)
+	os.WriteFile(dir+"/example.com.db", []byte(zone), 0o644)
+	env.Source = &source.BIND{ConfFile: dir + "/named.conf"}
+	env.OpenCheck = func(string) error { return fs.ErrPermission }
+	r := Run(context.Background(), env)
+	if !strings.Contains(messages(r, Fail), "1 zone files are not readable by the agent") || !strings.Contains(messages(r, Fail), "as root run: paneldns-agent fix-acls") {
+		t.Fatalf("failures:\n%s", messages(r, Fail))
 	}
 }

@@ -213,9 +213,10 @@ Enrol (as root) grants, with `setfacl`, `u:paneldns-agent:r` on named.conf, on e
 include except files holding only `key`/`tsig-keygen` statements, on every zone file, existing
 journal and the owner file; `u:paneldns-agent:rx` plus the default ACL `u:paneldns-agent:r` on
 each zone directory (new zone files and journals inherit it); and `u:paneldns-agent:x` on parent
-directories that others can't search. It never adds group membership. `--no-acl` prints the commands instead of running them. Whether a
-panel resets ACLs when it rewrites a zone file is unverified (prototype); `--check` opens every
-zone file as the agent and fails with the list of unreadable ones.
+directories that others can't search. It never adds group membership. `--no-acl` prints the commands instead of running them. Panels
+do lose these ACLs (the cPanel lab test found new zone files created 0600, so masked); the root
+watcher of D-30 restores them. `--check` opens every zone file as the agent and fails with the
+list of unreadable ones.
 
 **`$INCLUDE` in zone files** (found by the CI ACL test). The plan follows `$INCLUDE` in every
 text-format zone file, recursively up to 8 levels (the parser's limit), resolving relative names
@@ -361,3 +362,73 @@ commit, so packages and tarballs are reproducible. The package maintainer field 
 `HostingSimple` until the owner names a contact address. `packaging/gpg.key` is a **placeholder**:
 GitHub has no public copy of the key, and the release job refuses to run until the owner commits
 the real public key.
+
+## D-30 The root ACL watcher (7.9)
+
+**Finding** (cPanel DNSOnly lab test: cPanel 11.138, AlmaLinux 9, PowerDNS with the bind backend
+reading `/var/named`). cPanel edits existing zone files in place, so their ACL survives, but
+creates every new zone file with mode 0600. The file inherits `default:user:paneldns-agent:r`
+from the directory, but the 0600 mode sets its mask to `---`, so `getfacl` shows
+`user:paneldns-agent:r--  #effective:---` and the agent can't read new zones. `rebuilddnsconfig`
+also replaces `/etc/named.conf` with a new file (new inode, ACL gone; harmless there only
+because it is 0644). No default ACL can prevent the first case: the creating process's mode caps
+the mask.
+
+**Decision** (owner, 2026-11-21): a root systemd path watcher; the agent stays non-root.
+`paneldns-agent-acl.path` watches (`PathChanged=`) every zone directory and the directory of every
+other planned file (named.conf, its includes, the owner file), plus `/etc/paneldns-agent.conf`,
+and starts the oneshot `paneldns-agent-acl.service`, which runs
+`paneldns-agent fix-acls --settle 3s --no-units`.
+
+**Scope of the root helper.** `fix-acls` (refused unless euid 0) builds the same plan as enrol
+(`PlanACLs`) and, for each planned path, reads its access and default ACL from the
+`system.posix_acl_*` xattrs and adds only what is missing: `u:paneldns-agent:r` on files, `rx`
+on zone directories plus the default `r`, `x` on parents. Access through "other" bits counts
+(a replaced 0644 named.conf needs nothing). The mask becomes the current mask OR'd with the
+needed bits, never lower (a 0660 file keeps group write), and any other group-class entry
+(`group::`, named users and groups) that the wider mask would expose is cut back to what the old
+mask let through, so only the agent gains access: the 0600 case becomes
+`u:paneldns-agent:r--,g::---,m::r--`. It never touches files outside the plan, files the plan
+skips as key-only, the rndc key and config files, or `*.private` DNSSEC keys, whatever a plan
+says; inherited entries on other files in a zone directory (a new `K*.private` there) stay masked.
+It writes `setfacl` with the agent's numeric uid, so no NSS lookup is needed. It logs one line:
+`fix-acls: N fixed (paths), M already fine`, plus any errors (exit 1).
+
+**Races.** Events that arrive while the oneshot runs merge into that run. So each run first waits
+`--settle` (3 s; the panel writes the zone file, then named.conf), and passes again, after
+another wait, while a pass still fixed something (at most 5 passes). Its own `setfacl` calls
+trigger one more, empty run. The service has `StartLimitIntervalSec=0` (the settle delay spaces
+starts); the path unit has `TriggerLimitIntervalSec=10s`, `TriggerLimitBurst=2000`, which only a
+runaway loop should reach. Hitting it leaves the watcher failed until restarted, and `--check`
+reports that.
+
+**Hardening.** Root, `CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_FOWNER CAP_FSETID`:
+`CAP_DAC_READ_SEARCH` to read named.conf, includes and zone files (to follow `$INCLUDE` and
+classify key files) and search directories owned by `named`; `CAP_FOWNER` because setting an ACL
+on a file root doesn't own needs the owner or this capability; `CAP_FSETID` because the kernel
+clears the setgid bit when it sets an ACL on a file or directory whose group the caller isn't in,
+unless the caller has it. No `CAP_DAC_OVERRIDE`. `NoNewPrivileges`, `ProtectSystem=strict`,
+`ProtectHome=yes`, `PrivateTmp`, `PrivateDevices`, `PrivateNetwork`, `IPAddressDeny=any`,
+`RestrictAddressFamilies=none`, the `@system-service` filter minus `@chown @setuid`, and the
+usual kernel/proc protections. The service drop-in written by enrol adds `ReadWritePaths=` for
+the zone directories and for each planned file or traversed directory outside them (named.conf
+itself, not `/etc`), and `ProtectHome=read-only` only when a path is under a home directory
+(HestiaCP). The rndc key is not made inaccessible here, unlike in the agent's unit: the planner
+must read include files to classify them as key-only, and an inaccessible (empty) node would read
+as a harmless file.
+
+**Who updates the watch list.** With no `AF_UNIX` the service can't reach systemd, and it can't
+write unit files; letting it rewrite its own drop-in would let it widen its own sandbox. So the
+service only reports a stale watch list (in its log, and `--check` lists unwatched zone
+directories). Enrol, and `fix-acls` run by hand as root, rewrite
+`/etc/systemd/system/paneldns-agent-acl.{path,service}.d/watch.conf` when they changed, then
+`daemon-reload` and `try-restart` the path unit. Enrol writes the drop-ins even with `--no-acl`
+or `--no-start` but enables the watcher only without them, and runs one fix pass right after
+setting the ACLs, before `--check`. The packages ship both units without enabling them; removal
+stops and disables them and deletes the two drop-ins.
+
+**Residual risk.** A zone file created in the moment between a run's last plan and its exit
+waits for the next change in a watched directory (or a manual `fix-acls`); the agent reports the
+zone as unreadable meanwhile. A zone in a brand-new directory isn't watched until `fix-acls` runs
+by hand. Watching named.conf's directory (`/etc`) means unrelated writes there start runs; each
+re-reads named.conf and the zone files for `$INCLUDE`.

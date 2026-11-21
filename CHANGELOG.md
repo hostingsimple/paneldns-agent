@@ -6,6 +6,28 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Root ACL watcher (DECISIONS D-30): `paneldns-agent fix-acls` (root only) re-grants the agent's
+  read access the enrol plan grants where it was lost, adding only the agent's entry and the
+  needed mask bits (never lowering a mask or widening other entries, never touching key files),
+  and logs one summary line. `paneldns-agent-acl.path` watches the zone directories and the
+  directories of named.conf, its includes and the owner file, and starts the hardened oneshot
+  `paneldns-agent-acl.service` (`CAP_DAC_READ_SEARCH CAP_FOWNER CAP_FSETID` only, no network, no
+  `AF_UNIX`, writable paths limited to the planned ones). Enrol writes the per-server drop-ins
+  (`watch.conf` for both units), runs one fix pass and enables the watcher (not with `--no-acl`
+  or `--no-start`). `--check` reports whether the watcher is active and enabled and which zone
+  directories it doesn't watch. Both units ship in the packages; removal disables them and
+  deletes the drop-ins. CI reproduces the 0600 case and runs the units end to end.
+
+### Fixed
+
+- New zone files that cPanel creates with mode 0600 were unreadable by the agent: the inherited
+  `u:paneldns-agent:r` entry landed with `mask::---` (cPanel DNSOnly lab test, cPanel 11.138 on
+  AlmaLinux 9). Files a panel replaces with a new inode (cPanel's `rebuilddnsconfig` and
+  named.conf) lost their ACL. The ACL watcher restores both; the `--check` hint now names
+  `paneldns-agent fix-acls`.
+
 ### Changed
 
 - Repository re-signing: APT `Valid-Until` is now 30 days (was 14), and `resign-schedule.yml`

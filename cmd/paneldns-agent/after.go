@@ -57,6 +57,16 @@ func afterEnrol(o afterOptions) func(context.Context, config.Config, enrol.Detec
 		} else {
 			fmt.Fprintf(o.out, "Read ACLs set for %s: %d files, %d zone directories, %d parent directories\n",
 				enrol.User, len(plan.Read), len(plan.Dirs), len(plan.Traverse))
+			// The pass the watcher runs: masks that hide the agent's entry
+			// (a 0600 file with an inherited ACL) are raised now too.
+			if runtime.GOOS == "linux" {
+				if uid, err := lookupAgentUID(); err != nil {
+					fmt.Fprintln(o.out, "warning:", err)
+				} else if code := runFixACLs(cfg, uid, fixOptions{noWatch: true, out: o.out,
+					plan: func(config.Config) (*enrol.ACLPlan, error) { return plan, nil }}); code != 0 {
+					return errors.New("fix-acls failed; see the errors above")
+				}
+			}
 		}
 
 		allow := networkAllow(cfg)
@@ -66,10 +76,28 @@ func afterEnrol(o afterOptions) func(context.Context, config.Config, enrol.Detec
 		if len(allow) > 0 {
 			fmt.Fprintf(o.out, "Unit drop-in %s allows %s\n", DropInPath, strings.Join(allow, " "))
 		}
+		// The root ACL watcher's drop-ins: written even with --no-acl or
+		// --no-start, so enabling it later needs only systemctl.
+		watch := enrol.PlanWatch(plan)
+		for _, r := range watch.Rejected {
+			fmt.Fprintf(o.out, "warning: %s is not watched for ACL resets (characters a unit file can't hold)\n", r)
+		}
+		if _, err := syncWatchUnits(watch, o.out, false); err != nil {
+			return err
+		}
 		if runtime.GOOS != "linux" {
 			return nil
 		}
 		systemctl(o.out, "daemon-reload")
+		if o.noACL || o.noStart {
+			fmt.Fprintf(o.out, "--no-acl/--no-start: the ACL watcher is not enabled; enable it with: systemctl enable --now %s\n", enrol.ACLPathUnit)
+		} else if err := systemctl(o.out, "enable", enrol.ACLPathUnit); err != nil {
+			fmt.Fprintln(o.out, "warning:", err)
+		} else if err := systemctl(o.out, "restart", enrol.ACLPathUnit); err != nil {
+			fmt.Fprintln(o.out, "warning:", err)
+		} else {
+			fmt.Fprintf(o.out, "ACL watcher %s enabled: it restores the agent's read access when the panel writes zone files\n", enrol.ACLPathUnit)
+		}
 
 		fmt.Fprintln(o.out, "\nRunning paneldns-agent --check as", enrol.User, "...")
 		self, err := os.Executable()

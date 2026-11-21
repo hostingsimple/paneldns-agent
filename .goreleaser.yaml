@@ -47,6 +47,12 @@ archives:
       - src: packaging/systemd/paneldns-agent.service
         dst: paneldns-agent.service
         info: { mtime: "{{ .CommitDate }}" }
+      - src: packaging/systemd/paneldns-agent-acl.path
+        dst: paneldns-agent-acl.path
+        info: { mtime: "{{ .CommitDate }}" }
+      - src: packaging/systemd/paneldns-agent-acl.service
+        dst: paneldns-agent-acl.service
+        info: { mtime: "{{ .CommitDate }}" }
       - src: packaging/paneldns-agent.conf
         dst: paneldns-agent.conf
         info: { mtime: "{{ .CommitDate }}" }
@@ -76,6 +82,13 @@ nfpms:
     contents:
       - src: packaging/systemd/paneldns-agent.service
         dst: /usr/lib/systemd/system/paneldns-agent.service
+        file_info: { mode: 0644 }
+      # The root ACL watcher (DECISIONS D-30); enrol enables it.
+      - src: packaging/systemd/paneldns-agent-acl.path
+        dst: /usr/lib/systemd/system/paneldns-agent-acl.path
+        file_info: { mode: 0644 }
+      - src: packaging/systemd/paneldns-agent-acl.service
+        dst: /usr/lib/systemd/system/paneldns-agent-acl.service
         file_info: { mode: 0644 }
       # A config file: upgrades keep local edits (dpkg conffile, rpm noreplace).
       - src: packaging/paneldns-agent.conf

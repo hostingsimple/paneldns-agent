@@ -181,6 +181,8 @@ jobs:
         run: |
           set -eu
           sudo dpkg -i dist/paneldns-agent_*_amd64.deb
-          systemd-analyze verify /usr/lib/systemd/system/paneldns-agent.service
+          systemd-analyze verify /usr/lib/systemd/system/paneldns-agent.service \
+            /usr/lib/systemd/system/paneldns-agent-acl.path /usr/lib/systemd/system/paneldns-agent-acl.service
           systemd-analyze security paneldns-agent.service --no-pager || true
+          systemd-analyze security paneldns-agent-acl.service --no-pager || true
           sudo dpkg -r paneldns-agent

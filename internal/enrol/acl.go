@@ -180,21 +180,28 @@ func classify(f string) (hasKey, hasOther bool, err error) {
 // ApplyACLs runs the plan's setfacl commands.
 func ApplyACLs(p *ACLPlan, run func(argv []string) error) error {
 	if run == nil {
-		run = func(argv []string) error {
-			out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput()
-			if err != nil {
-				if errorsIsNotFound(err) {
-					return fmt.Errorf("setfacl not found: install the acl package (apt install acl / dnf install acl)")
-				}
-				return fmt.Errorf("%s: %v: %s", strings.Join(argv[:3], " "), err, strings.TrimSpace(string(out)))
-			}
-			return nil
-		}
+		run = runSetfacl
 	}
 	for _, c := range p.Commands() {
 		if err := run(c); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// runSetfacl runs one setfacl command line.
+func runSetfacl(argv []string) error {
+	out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput()
+	if err != nil {
+		if errorsIsNotFound(err) {
+			return fmt.Errorf("setfacl not found: install the acl package (apt install acl / dnf install acl)")
+		}
+		cmd := strings.Join(argv, " ")
+		if len(argv) > 5 {
+			cmd = strings.Join(argv[:3], " ") + " ..."
+		}
+		return fmt.Errorf("%s: %v: %s", cmd, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
