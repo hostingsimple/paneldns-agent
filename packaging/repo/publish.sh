@@ -55,6 +55,17 @@ prune "$pool/*_arm64.deb"
 prune "rpm/x86_64/*.rpm"
 prune "rpm/aarch64/*.rpm"
 
+# The stable repository (the "main" branch that Pages serves) never carries a
+# pre-release: their versions contain "~" (0.1.0~p5.1). The P5 dry run's
+# packages reached main's history before releases split by branch.
+if [ "${PACKAGES_BRANCH:-}" = main ]; then
+	for old in "$pool"/*~*.deb rpm/x86_64/*~*.rpm rpm/aarch64/*~*.rpm; do
+		[ -e "$old" ] || continue
+		echo "removing pre-release $old from stable"
+		rm -f -- "$old"
+	done
+fi
+
 # ---- APT ---------------------------------------------------------------
 (
 	cd apt
