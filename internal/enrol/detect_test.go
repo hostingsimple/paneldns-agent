@@ -74,3 +74,57 @@ func TestDetectSource(t *testing.T) {
 		})
 	}
 }
+
+// P1 on fusion: a stale DirectAdmin /etc/named.conf next to the /etc/bind/named.conf the running
+// named (no -c) reads by its compiled-in default.
+func TestDetectSourcePrefersRunningNamed(t *testing.T) {
+	stubVersion := func(t *testing.T, out string) {
+		t.Helper()
+		old := namedVersionOutput
+		namedVersionOutput = func() ([]byte, error) { return []byte(out), nil }
+		t.Cleanup(func() { namedVersionOutput = old })
+	}
+	tests := []struct {
+		name, cmdline, version, want, note string
+	}{
+		{"compiled-in default", "/usr/sbin/named\x00-f\x00-u\x00bind\x00",
+			"BIND 9.18.39-0ubuntu0.24.04.9-Ubuntu\n  named configuration:  /etc/bind/named.conf\n  rndc configuration:   /etc/bind/rndc.conf\n",
+			"/etc/bind/named.conf", "also found, not used: /etc/named.conf"},
+		{"explicit -c", "/usr/sbin/named\x00-u\x00named\x00-c\x00/etc/named.conf\x00",
+			"  named configuration:  /etc/bind/named.conf\n", "/etc/named.conf", "also found, not used: /etc/bind/named.conf"},
+		{"joined -c", "named\x00-c/etc/bind/named.conf\x00", "", "/etc/bind/named.conf", "(named -c)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			withRoot(t, map[string]string{
+				"/etc/named.conf":      "options { directory \"/var/named\"; };",
+				"/etc/bind/named.conf": "",
+				"/proc/2831/comm":      "named\n",
+				"/proc/2831/cmdline":   tt.cmdline,
+				"/proc/77/comm":        "sshd\n",
+			})
+			stubVersion(t, tt.version)
+			d, err := DetectSource()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if d.ZoneSource != "bind" || d.ZonesFile != tt.want {
+				t.Fatalf("got %s %s, want bind %s", d.ZoneSource, d.ZonesFile, tt.want)
+			}
+			if !strings.Contains(strings.Join(d.Notes, "\n"), tt.note) {
+				t.Fatalf("notes %q lack %q", d.Notes, tt.note)
+			}
+		})
+	}
+}
+
+func TestDetectSourceNamedNotRunningNotesTheChoice(t *testing.T) {
+	withRoot(t, map[string]string{"/etc/named.conf": "", "/etc/bind/named.conf": "", "/proc/77/comm": "sshd\n"})
+	d, err := DetectSource()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.ZonesFile != "/etc/named.conf" || !strings.Contains(strings.Join(d.Notes, "\n"), "check ZONES_FILE") {
+		t.Fatalf("got %s, notes %q", d.ZonesFile, d.Notes)
+	}
+}
