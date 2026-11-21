@@ -6,8 +6,10 @@ package enrol
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
@@ -57,9 +59,22 @@ func DetectSource() (Detected, error) {
 		d.Notes = append(d.Notes, "chrooted named in "+chroot)
 		return d, nil
 	}
+	// P1 on fusion (DirectAdmin on Ubuntu 24.04): /etc/named.conf was a stale panel template
+	// pointing at a /var/named that did not exist, while the running named read
+	// /etc/bind/named.conf. The config the running named uses wins over the first file found.
+	if c, how := runningNamedConf(); c != "" && fileExists(c) {
+		d.ZoneSource, d.ZonesFile = config.SourceBIND, c
+		if others := otherNamedConfs(c); len(others) > 0 {
+			d.Notes = append(d.Notes, fmt.Sprintf("named reads %s (%s); also found, not used: %s", c, how, strings.Join(others, ", ")))
+		}
+		return d, nil
+	}
 	for _, c := range namedConfs {
 		if fileExists(c) {
 			d.ZoneSource, d.ZonesFile = config.SourceBIND, c
+			if others := otherNamedConfs(c); len(others) > 0 {
+				d.Notes = append(d.Notes, fmt.Sprintf("named is not running; chose %s, also found %s: check ZONES_FILE", c, strings.Join(others, ", ")))
+			}
 			return d, nil
 		}
 	}
@@ -165,4 +180,65 @@ func detectChroot() (chroot, conf string) {
 		}
 	}
 	return "", ""
+}
+
+// namedVersionOutput runs `named -V`, whose "named configuration:" line is the compiled-in
+// default config path (tests replace it).
+var namedVersionOutput = func() ([]byte, error) { return exec.Command("named", "-V").Output() }
+
+// runningNamedConf returns the named.conf the running named reads: its -c argument, or else
+// the compiled-in default from `named -V`. Empty when no named process is found.
+func runningNamedConf() (conf, how string) {
+	entries, err := os.ReadDir(rooted("/proc"))
+	if err != nil {
+		return "", ""
+	}
+	found := false
+	for _, e := range entries {
+		if !e.IsDir() || strings.Trim(e.Name(), "0123456789") != "" {
+			continue
+		}
+		comm, err := os.ReadFile(rooted("/proc/" + e.Name() + "/comm"))
+		if err != nil || strings.TrimSpace(string(comm)) != "named" {
+			continue
+		}
+		found = true
+		raw, err := os.ReadFile(rooted("/proc/" + e.Name() + "/cmdline"))
+		if err != nil {
+			continue
+		}
+		args := strings.Split(strings.TrimRight(string(raw), "\x00"), "\x00")
+		for i, a := range args {
+			if a == "-c" && i+1 < len(args) {
+				return args[i+1], "named -c"
+			}
+			if strings.HasPrefix(a, "-c") && len(a) > 2 {
+				return a[2:], "named -c"
+			}
+		}
+	}
+	if !found {
+		return "", ""
+	}
+	out, err := namedVersionOutput()
+	if err != nil {
+		return "", ""
+	}
+	for _, line := range bytes.Split(out, []byte("\n")) {
+		if k, v, ok := strings.Cut(string(line), ":"); ok && strings.TrimSpace(k) == "named configuration" {
+			return strings.TrimSpace(v), "named -V default"
+		}
+	}
+	return "", ""
+}
+
+// otherNamedConfs lists the usual named.conf locations that exist besides chosen.
+func otherNamedConfs(chosen string) []string {
+	var others []string
+	for _, c := range namedConfs {
+		if c != chosen && fileExists(c) {
+			others = append(others, c)
+		}
+	}
+	return others
 }
