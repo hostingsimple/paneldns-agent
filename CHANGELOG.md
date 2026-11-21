@@ -36,6 +36,8 @@ All notable changes to this project are listed here. The format follows
 
 ### Fixed
 
+- The stable repository no longer lists pre-release packages: a release or re-sign on `main`
+  removes any version containing `~` (the P5 dry run's `0.1.0~p5.1` had reached it).
 - `enrol` reads the named.conf the running named uses (its `-c`, else the `named -V` default)
   instead of the first file found. On DirectAdmin for Ubuntu a stale `/etc/named.conf` sat next
   to the live `/etc/bind/named.conf` (prototype P1 on fusion).
