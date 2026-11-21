@@ -6,6 +6,20 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Repository re-signing: APT `Valid-Until` is now 30 days (was 14), and `resign-schedule.yml`
+  dispatches the re-sign on the 1st and 15th of each month (was every Monday). Each run still
+  waits for the owner's approval; one missed approval leaves about two weeks of margin.
+
+### Fixed
+
+- `enrol` reads the named.conf the running named uses (its `-c`, else the `named -V` default)
+  instead of the first file found. On DirectAdmin for Ubuntu a stale `/etc/named.conf` sat next
+  to the live `/etc/bind/named.conf` (prototype P1 on fusion).
+- Releases build the pushed tag when a commit carries several tags (`GORELEASER_CURRENT_TAG`);
+  v0.1.0 failed its reproducibility check because goreleaser stamped `0.1.0-p5.1`.
+
 ### Added
 
 - Packaging and releases (t044): GoReleaser/nfpm `.deb` and `.rpm` for linux amd64/arm64 with

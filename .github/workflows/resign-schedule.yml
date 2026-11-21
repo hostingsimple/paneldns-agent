@@ -1,14 +1,15 @@
 name: resign-schedule
 
-# Weekly re-sign of the repository metadata (spec 7.10): APT Valid-Until is
-# 14 days, so the metadata must be re-signed in time. This workflow holds no
+# Re-sign of the repository metadata on the 1st and 15th of each month (spec
+# 7.10, owner decision 2026-11-21): APT Valid-Until is 30 days, so one missed
+# approval still leaves about two weeks before apt refuses the repository. This workflow holds no
 # secret; it dispatches release.yml in resign mode on the latest release tag,
 # so the signing environment still only ever runs for a version tag, and
 # that run waits for the owner's approval like any signing run.
 
 on:
   schedule:
-    - cron: "17 6 * * 1"
+    - cron: "17 6 1,15 * *"
   workflow_dispatch:
 
 permissions: {}
