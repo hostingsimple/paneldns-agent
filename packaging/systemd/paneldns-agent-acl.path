@@ -1,0 +1,34 @@
+# paneldns-agent-acl.path: restores the agent's read ACLs when the panel
+# writes zone files (docs/DECISIONS.md D-30).
+#
+# cPanel creates every new zone file with mode 0600. The default ACL that
+# `paneldns-agent enrol` puts on a zone directory still gives the new file a
+# u:paneldns-agent:r entry, but the 0600 mode leaves the file's mask at ---,
+# so the entry has no effect. A file the panel replaces (a new file renamed
+# over it, as rebuilddnsconfig does with named.conf) loses its ACL entirely.
+# This unit watches the zone directories and the directories of named.conf,
+# its includes and the owner file, and starts paneldns-agent-acl.service,
+# which re-grants only the agent's read access.
+#
+# The directories differ per server: `paneldns-agent enrol`, and
+# `paneldns-agent fix-acls` run by hand as root, write them to
+# /etc/systemd/system/paneldns-agent-acl.path.d/watch.conf.
+
+[Unit]
+Description=PanelDNS agent: watch zone directories for lost read ACLs
+Documentation=https://github.com/hostingsimple/paneldns-agent/blob/main/docs/INSTALL.md
+
+[Path]
+# The agent's config; the zone directories come from the drop-in.
+PathChanged=/etc/paneldns-agent.conf
+Unit=paneldns-agent-acl.service
+# Events that arrive while the service runs merge into that run, so a burst
+# (an account restore creating many zones, named writing journals) costs one
+# or two runs. The limit only stops a runaway loop; hitting it stops the
+# watcher until `systemctl restart paneldns-agent-acl.path`, and
+# `paneldns-agent --check` reports that.
+TriggerLimitIntervalSec=10s
+TriggerLimitBurst=2000
+
+[Install]
+WantedBy=paths.target

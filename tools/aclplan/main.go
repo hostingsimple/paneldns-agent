@@ -1,7 +1,8 @@
 // Command aclplan prints the setfacl commands `paneldns-agent enrol`
 // would run for a config file, without enrolling. CI uses it to set up
-// the ACL-only access test; an administrator can use it to review or
-// re-apply the ACLs after a panel reset them.
+// the ACL-only access test; an administrator can use it to review the
+// ACLs. To restore ACLs a panel reset or masked, run `paneldns-agent
+// fix-acls` (the paneldns-agent-acl.path watcher does so automatically).
 //
 //	aclplan /etc/paneldns-agent.conf | sh
 package main

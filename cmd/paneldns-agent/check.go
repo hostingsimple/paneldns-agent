@@ -5,7 +5,9 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/hostingsimple/paneldns-agent/internal/check"
@@ -48,6 +50,13 @@ func buildCheckEnv(configPath, stateDir string) check.Env {
 		ConfigPath: configPath, StateDir: stateDir,
 		Stat: statFile, OpenCheck: check.DefaultOpenCheck, Lookup: check.DefaultLookup,
 		Hostname: host.Hostname(),
+	}
+	if unitsSupported {
+		env.Systemctl = func(args ...string) (string, error) {
+			b, err := runSystemctl(args...)
+			return strings.TrimSpace(string(b)), err
+		}
+		env.WatchDropIn, env.ReadFile = aclPathDropIn, os.ReadFile
 	}
 	cfg, err := config.Load(configPath)
 	if err != nil {
