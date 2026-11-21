@@ -94,3 +94,73 @@ jobs:
           getfacl -R /srv/acl 2>/dev/null | head -60 || true
           cd /
           sudo -u paneldns-agent env PANELDNS_ACL_TEST_CONF=/srv/acl/named.conf /usr/local/bin/paneldns-integration.test -test.run TestACLAccess -test.v
+
+      # cPanel creates new zone files with mode 0600: the inherited
+      # u:paneldns-agent:r entry lands with mask::---, so the agent can't read
+      # them (DECISIONS D-30). Reproduce that, then let fix-acls repair it.
+      - name: fix-acls restores read on a new 0600 zone file
+        run: |
+          set -eu
+          CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/paneldns-agent" ./cmd/paneldns-agent
+          sudo install -m 0755 "$RUNNER_TEMP/paneldns-agent" /usr/bin/paneldns-agent
+          . packaging/ci/acl-addzone.sh
+          addzone new1.example.org
+          getfacl -c /srv/acl/new1.example.org.db
+          getfacl -c /srv/acl/new1.example.org.db | grep -qx 'mask::---'
+          if sudo -u paneldns-agent cat /srv/acl/new1.example.org.db >/dev/null 2>&1; then
+            echo "the agent can read the 0600 file before fix-acls: the test doesn't reproduce the finding"; exit 1
+          fi
+          sudo paneldns-agent fix-acls --config /srv/acl/paneldns-agent.conf | tee "$RUNNER_TEMP/fix1.txt"
+          grep -q '^fix-acls: 1 fixed (/srv/acl/new1.example.org.db)' "$RUNNER_TEMP/fix1.txt"
+          getfacl -c /srv/acl/new1.example.org.db
+          sudo -u paneldns-agent cat /srv/acl/new1.example.org.db >/dev/null
+          # The mask gained read for the agent; the owning group gained nothing.
+          getfacl -c /srv/acl/new1.example.org.db | grep -qx 'mask::r--'
+          getfacl -c /srv/acl/new1.example.org.db | grep -qx 'group::---'
+          sudo paneldns-agent fix-acls --config /srv/acl/paneldns-agent.conf | grep -q '^fix-acls: 0 fixed'
+          if sudo -u paneldns-agent cat /srv/acl/rndc.key >/dev/null 2>&1; then
+            echo "the agent can read rndc.key"; exit 1
+          fi
+
+      - name: the ACL watcher units fix new and replaced files by themselves
+        run: |
+          set -eu
+          . packaging/ci/acl-addzone.sh
+          sudo install -m 0644 packaging/systemd/paneldns-agent-acl.path packaging/systemd/paneldns-agent-acl.service /usr/lib/systemd/system/
+          sudo install -m 0640 -o root -g "$(id -gn paneldns-agent)" /srv/acl/paneldns-agent.conf /etc/paneldns-agent.conf
+          sudo systemd-analyze verify /usr/lib/systemd/system/paneldns-agent-acl.path /usr/lib/systemd/system/paneldns-agent-acl.service
+          # By hand, fix-acls writes the watch list and reloads systemd.
+          sudo paneldns-agent fix-acls
+          cat /etc/systemd/system/paneldns-agent-acl.path.d/watch.conf /etc/systemd/system/paneldns-agent-acl.service.d/watch.conf
+          grep -qx 'PathChanged=/srv/acl' /etc/systemd/system/paneldns-agent-acl.path.d/watch.conf
+          sudo systemctl enable --now paneldns-agent-acl.path
+          systemctl status paneldns-agent-acl.path --no-pager
+          readable() { # $1 = file; waits up to 30s for the agent to read it
+            for _ in $(seq 1 30); do
+              if sudo -u paneldns-agent cat "$1" >/dev/null 2>&1; then return 0; fi
+              sleep 1
+            done
+            getfacl "$1" || true
+            sudo journalctl -u paneldns-agent-acl.service --no-pager | tail -40
+            echo "the watcher did not restore read on $1"; return 1
+          }
+          addzone new2.example.org
+          readable /srv/acl/new2.example.org.db
+          getfacl -c /srv/acl/new2.example.org.db | grep -qx 'mask::r--'
+          # A file replaced by a new inode (as cPanel's rebuilddnsconfig does
+          # with named.conf) loses its ACL; the watcher restores it.
+          sudo cp /srv/acl/named.conf /srv/acl/named.conf.new
+          sudo setfacl -b /srv/acl/named.conf.new
+          sudo chmod 0600 /srv/acl/named.conf.new
+          sudo mv /srv/acl/named.conf.new /srv/acl/named.conf
+          readable /srv/acl/named.conf
+          sleep 8 # let the watcher's follow-up run finish
+          sudo journalctl -u paneldns-agent-acl.service --no-pager | tail -20
+          systemctl is-active paneldns-agent-acl.path
+          systemctl is-enabled paneldns-agent-acl.path
+          if sudo -u paneldns-agent cat /srv/acl/rndc.key >/dev/null 2>&1; then
+            echo "the agent can read rndc.key"; exit 1
+          fi
+          systemd-analyze security paneldns-agent-acl.service --no-pager || true
+          cd /
+          sudo -u paneldns-agent env PANELDNS_ACL_TEST_CONF=/srv/acl/named.conf /usr/local/bin/paneldns-integration.test -test.run TestACLAccess -test.v

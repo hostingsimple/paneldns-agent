@@ -36,6 +36,9 @@ getent group paneldns-agent >/dev/null || fail "group paneldns-agent missing"
 [ -x /usr/bin/paneldns-agent ] || fail "binary missing"
 /usr/bin/paneldns-agent version
 [ -f /usr/lib/systemd/system/paneldns-agent.service ] || fail "unit missing"
+for u in paneldns-agent-acl.path paneldns-agent-acl.service; do
+	[ -f "/usr/lib/systemd/system/$u" ] || fail "$u missing"
+done
 [ "$(stat -c '%a %U %G' /etc/paneldns-agent.conf)" = "640 root paneldns-agent" ] \
 	|| fail "config mode/owner: $(stat -c '%a %U %G' /etc/paneldns-agent.conf)"
 [ "$(stat -c '%a %U %G' /var/lib/paneldns-agent)" = "700 paneldns-agent paneldns-agent" ] \
@@ -57,7 +60,12 @@ grep -q '^INTERVAL=120 ' /etc/paneldns-agent.conf || fail "test edit not applied
 reinstall
 grep -q '^INTERVAL=120 ' /etc/paneldns-agent.conf || fail "upgrade replaced the edited config"
 
-echo "== remove"
+echo "== remove deletes the ACL watcher drop-ins enrol wrote"
+mkdir -p /etc/systemd/system/paneldns-agent-acl.path.d /etc/systemd/system/paneldns-agent-acl.service.d
+echo "[Path]" > /etc/systemd/system/paneldns-agent-acl.path.d/watch.conf
+echo "[Service]" > /etc/systemd/system/paneldns-agent-acl.service.d/watch.conf
 remove
 [ ! -e /usr/bin/paneldns-agent ] || fail "binary left after removal"
+[ ! -e /etc/systemd/system/paneldns-agent-acl.path.d ] || fail "path drop-in left after removal"
+[ ! -e /etc/systemd/system/paneldns-agent-acl.service.d ] || fail "service drop-in left after removal"
 echo "OK: $pkg"
