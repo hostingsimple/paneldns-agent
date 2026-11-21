@@ -12,12 +12,12 @@
 #   PASSFILE    file holding the subkey passphrase
 #   GNUPGHOME   the throw-away keyring
 #   KEEP        versions kept per architecture and format (default 5)
-#   VALID_DAYS  APT Valid-Until, in days (default 14; spec 7.10)
+#   VALID_DAYS  APT Valid-Until, in days (default 30; spec 7.10, owner decision 2026-11-21)
 set -eu
 
 : "${MODE:?}" "${REPO:?}" "${AGENT:?}" "${SIGN_FPR:?}" "${PASSFILE:?}" "${GNUPGHOME:?}"
 KEEP="${KEEP:-5}"
-VALID_DAYS="${VALID_DAYS:-14}"
+VALID_DAYS="${VALID_DAYS:-30}"
 
 gpgsign() {
 	gpg --batch --yes --pinentry-mode loopback --passphrase-file "$PASSFILE" \

@@ -323,7 +323,7 @@ signing subkey each year. The job pins `github.com`'s published ed25519 host key
   `AAE3B3B1258CAAB0ED1AE1C3697D46A632CB9283`. It imports the subkeys into a throw-away keyring,
   refusing if the primary secret key is present, since it must stay offline. It then signs the
   `.rpm` files (checked with `rpmkeys --checksig`), rewrites and signs `SHA256SUMS`, rebuilds and
-  signs the APT metadata (`Valid-Until` 14 days) and the YUM metadata (`repomd.xml.asc`; clients
+  signs the APT metadata (`Valid-Until` 30 days) and the YUM metadata (`repomd.xml.asc`; clients
   expire it after `metadata_expire=1d`), commits to `paneldns-packages`, creates the GitHub
   release, and deletes the keyring, passphrase file and deploy key.
 - `attest-signed` has no secrets and attests the signed `.rpm` files and the final `SHA256SUMS`,
@@ -333,7 +333,8 @@ signing subkey each year. The job pins `github.com`'s published ed25519 host key
 - Pre-release tags (containing `-`, e.g. `v0.1.0-p5.1`) publish to a `staging` branch of
   `paneldns-packages` and create a GitHub pre-release. Pages serves `main` only, so a P5 dry run
   never reaches customers.
-- Weekly re-sign: `resign-schedule.yml` holds no secret and dispatches `release.yml` with
+- Fortnightly re-sign (owner decision 2026-11-21: `Valid-Until` 30 days, re-signed on the
+  1st and 15th, so one missed approval is safe; was 14 days, weekly): `resign-schedule.yml` holds no secret and dispatches `release.yml` with
   `mode=resign` on the latest non-pre-release tag. That run needs the owner's approval like any
   signing run. The daily reminders from day 7 (spec 7.10) and the rollback mode (7.12) are not
   built yet.

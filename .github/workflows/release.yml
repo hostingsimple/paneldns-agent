@@ -11,7 +11,7 @@ name: release
 #   attest-signed     no secrets: provenance for the signed .rpms and SHA256SUMS
 #
 # Triggers: a pushed v* tag (release), or a dispatch on a v* tag with
-# mode=resign (weekly re-sign, sent by resign-schedule.yml). Pull requests and
+# mode=resign (re-sign on the 1st and 15th, sent by resign-schedule.yml). Pull requests and
 # forks can't start this workflow, and every job also checks the ref.
 # Pre-release tags (containing "-", e.g. v0.1.0-p5.1) publish to the
 # "staging" branch of paneldns-packages instead of "main" (prototype P5).
