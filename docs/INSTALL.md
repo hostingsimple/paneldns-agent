@@ -48,9 +48,45 @@ sudo paneldns-agent enrol --url https://app.paneldns.example --code <code from t
 different fingerprint, and can enrol in one go. Download it, read it, then run it as root; never
 pipe it into a shell.
 
+## The ACL watcher
+
+The agent runs as the unprivileged `paneldns-agent` user and reads zone files through the POSIX
+ACLs enrol grants. Panels don't always keep them: cPanel creates every new zone file with mode
+0600, which sets the file's ACL mask to `---` and so cancels the read entry the file inherits
+from its directory (`getfacl` shows `user:paneldns-agent:r--  #effective:---`), and a file the
+panel replaces with a new one loses its ACL altogether.
+
+Enrol therefore also enables `paneldns-agent-acl.path`. It watches the zone directories and the
+directories of named.conf, its includes and the owner file, and on any change starts
+`paneldns-agent-acl.service`, which runs `paneldns-agent fix-acls` as root. That re-grants only
+the agent's read access where it is missing (the agent's entry plus the read bit of the mask)
+on the files and directories enrol planned; it never touches key files and never lowers a mask,
+so a group's write access stays. Its log is one line per run.
+
+Check it:
+
+```sh
+systemctl status paneldns-agent-acl.path
+journalctl -u paneldns-agent-acl.service -n 20
+paneldns-agent --check     # reports the watcher, and zone files the agent can't read
+```
+
+The watched directories differ per server. Enrol writes them to
+`/etc/systemd/system/paneldns-agent-acl.path.d/watch.conf`, and the paths the service may change
+to `/etc/systemd/system/paneldns-agent-acl.service.d/watch.conf`. When the panel adds a zone in a
+new directory (HestiaCP, for a new hosting user), `--check` and the service's log say the watch
+list is out of date; run `sudo paneldns-agent fix-acls` once by hand to fix the ACLs, rewrite
+both drop-ins and restart the watcher. `sudo paneldns-agent fix-acls` is also the manual fix
+whenever `--check` reports unreadable zone files.
+
+With `--no-acl` or `--no-start`, enrol writes the drop-ins but doesn't enable the watcher; enable
+it with `systemctl enable --now paneldns-agent-acl.path`. If a burst of changes ever trips its
+trigger limit, `systemctl status` shows it failed; `systemctl restart paneldns-agent-acl.path`
+starts it again.
+
 ## Other systems
 
-Each GitHub release carries `paneldns-agent_<version>_linux_<arch>.tar.gz` (binary, unit file,
+Each GitHub release carries `paneldns-agent_<version>_linux_<arch>.tar.gz` (binary, unit files,
 sample config), `SHA256SUMS` and `SHA256SUMS.asc`:
 
 ```sh
@@ -76,5 +112,6 @@ is fixed by a newer version (spec 7.12).
 
 ## Remove
 
-`apt remove paneldns-agent` / `dnf remove paneldns-agent` stops the service; the package tells
-PanelDNS nothing, so decommission the server in the dashboard as well.
+`apt remove paneldns-agent` / `dnf remove paneldns-agent` stops the service and the ACL watcher
+and removes the watcher's drop-ins; the ACLs already granted stay. The package tells PanelDNS
+nothing, so decommission the server in the dashboard as well.

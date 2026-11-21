@@ -1,9 +1,10 @@
 #!/bin/sh
 # paneldns-agent postinstall (deb postinst, rpm %post).
 # Makes sure the state directory and the config file have the modes the
-# agent and --check expect, reloads systemd, and restarts the unit if it is
-# enabled (an upgrade). It never enables or starts the unit on a first
-# install: `paneldns-agent enrol` does that. No network access (spec 7.1).
+# agent and --check expect, reloads systemd, and restarts the agent and the
+# ACL watcher if they are enabled (an upgrade). It never enables or starts a
+# unit on a first install: `paneldns-agent enrol` does that. No network
+# access (spec 7.1).
 set -e
 
 # deb calls this with "configure" (and others such as "abort-upgrade");
@@ -23,6 +24,9 @@ if [ -d /run/systemd/system ]; then
 	systemctl daemon-reload >/dev/null 2>&1 || true
 	if systemctl is-enabled --quiet paneldns-agent.service 2>/dev/null; then
 		systemctl try-restart paneldns-agent.service >/dev/null 2>&1 || true
+	fi
+	if systemctl is-enabled --quiet paneldns-agent-acl.path 2>/dev/null; then
+		systemctl try-restart paneldns-agent-acl.path >/dev/null 2>&1 || true
 	fi
 fi
 exit 0

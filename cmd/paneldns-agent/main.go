@@ -18,6 +18,7 @@ Usage:
   paneldns-agent run       [--config FILE]   run the sync loop (systemd ExecStart)
   paneldns-agent --check   [--config FILE] [--zone NAME] [--json]
   paneldns-agent enrol     --url URL --code CODE [--config FILE] [--no-acl] [--no-start]
+  paneldns-agent fix-acls  [--config FILE]   (root) restore the agent's read ACLs
   paneldns-agent version
 
 The enrolment code can also be given in the PANELDNS_ENROL_CODE
@@ -46,6 +47,8 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 		return cmdCheck(args[1:], stdout, stderr)
 	case "enrol", "enroll":
 		return cmdEnrol(args[1:], stdout, stderr)
+	case "fix-acls":
+		return cmdFixACLs(args[1:], stdout, stderr)
 	case "version", "--version", "-v":
 		fmt.Fprintln(stdout, version.Version)
 		return 0

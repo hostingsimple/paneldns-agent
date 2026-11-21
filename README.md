@@ -26,8 +26,11 @@ Signed `.deb` and `.rpm` packages come from `https://packages.paneldns.com`; see
    detects the zone source and the panel's owner file, generates an Ed25519 key pair on the
    server, sends only the public key with the code, grants the `paneldns-agent` user read
    access through POSIX ACLs (never group membership in `named`, `bind` or `pdns`), runs
-   `--check` as that user and starts the service. `--no-acl` prints the `setfacl` commands
-   instead; `--no-start` leaves the service stopped.
+   `--check` as that user and starts the service. It also enables `paneldns-agent-acl.path`, a
+   root watcher that runs `paneldns-agent fix-acls` when the panel writes zone files, because
+   panels such as cPanel create new zone files with mode 0600, which masks the agent's
+   inherited ACL entry. `--no-acl` prints the `setfacl` commands instead; `--no-start` leaves
+   the service and the watcher stopped.
 2. `paneldns-agent run` (the systemd unit) scans the zones every `INTERVAL` seconds, pushes
    changed zones and deletions, sends a heartbeat, and every `RESYNC` seconds sends a full
    inventory of names and content hashes.
@@ -71,6 +74,12 @@ including the canonical zone text and content hash, in [`docs/PROTOCOL.md`](docs
   [`packaging/systemd/paneldns-agent.service`](packaging/systemd/paneldns-agent.service). When
   the PowerDNS API or the system resolver is on a loopback address, enrol adds a drop-in with
   `IPAddressAllow=` for exactly those addresses.
+- The agent itself never runs as root. The one root piece is the ACL watcher's oneshot
+  `paneldns-agent-acl.service` (`fix-acls`): it only adds the agent's read entry and the read bit
+  of the mask on the files and directories enrol planned, never on key files, never lowering a
+  mask or widening anyone else's access. It runs with `CAP_DAC_READ_SEARCH CAP_FOWNER CAP_FSETID`
+  only, no network and no `AF_UNIX`, and writes only to the planned paths; see
+  [`packaging/systemd/paneldns-agent-acl.service`](packaging/systemd/paneldns-agent-acl.service).
 
 ## Owners
 

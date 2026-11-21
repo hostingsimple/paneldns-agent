@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path"
 	"sort"
 	"strings"
 	"time"
@@ -136,9 +137,15 @@ type Env struct {
 	Stat       func(path string) (FileMode, error)
 	OpenCheck  func(path string) error // can the agent read this file?
 	Hostname   string
-	Zone       string // --zone
-	Sample     int    // zones read and parsed (default 5)
-	Now        func() time.Time
+	// Systemctl runs systemctl and returns its output, trimmed; nil skips
+	// the ACL watcher check (not a systemd host).
+	Systemctl func(args ...string) (string, error)
+	// WatchDropIn is the ACL watcher's drop-in; ReadFile reads it.
+	WatchDropIn string
+	ReadFile    func(string) ([]byte, error)
+	Zone        string // --zone
+	Sample      int    // zones read and parsed (default 5)
+	Now         func() time.Time
 }
 
 // Run performs the checks.
@@ -161,6 +168,7 @@ func Run(ctx context.Context, env Env) *Result {
 	}
 	checkConfig(r, env)
 	listing := checkBackend(ctx, r, env, cfg)
+	checkACLWatcher(r, env, listing)
 	checkOwners(r, env, listing)
 	checkLastRun(r, env)
 	checkServer(ctx, r, env, cfg, listing)
@@ -271,7 +279,7 @@ func checkBackend(ctx context.Context, r *Result, env Env, cfg config.Config) *s
 			}
 		}
 		if len(denied) > 0 {
-			r.add("zones", Fail, "%d zone files are not readable by the agent (ACL missing or reset by the panel?): %s; re-run paneldns-agent enrol or grant setfacl -m u:paneldns-agent:r", len(denied), limitList(denied, 10))
+			r.add("zones", Fail, "%d zone files are not readable by the agent (ACL missing, or reset or masked by the panel?): %s; as root run: paneldns-agent fix-acls (the %s watcher does this automatically when enabled)", len(denied), limitList(denied, 10), ACLPathUnit)
 		}
 	}
 	n := min(env.Sample, len(synced))
@@ -288,6 +296,65 @@ func checkBackend(ctx context.Context, r *Result, env Env, cfg config.Config) *s
 		r.add("zones", OK, "%s: %d records, serial %d, %s%s", z.Name, len(c.Lines), c.Serial, c.Hash, note)
 	}
 	return listing
+}
+
+// ACLPathUnit is the root ACL watcher (docs/DECISIONS.md D-30).
+const ACLPathUnit = "paneldns-agent-acl.path"
+
+// checkACLWatcher reports whether the root ACL watcher runs, and whether
+// it watches every zone directory.
+func checkACLWatcher(r *Result, env Env, listing *source.Listing) {
+	if env.Systemctl == nil {
+		return
+	}
+	active, aerr := env.Systemctl("is-active", ACLPathUnit)
+	enabled, _ := env.Systemctl("is-enabled", ACLPathUnit)
+	if aerr != nil && active == "" {
+		r.add("zones", Info, "ACL watcher %s: can't ask systemd (%v)", ACLPathUnit, aerr)
+		return
+	}
+	firstLine := func(s string) string {
+		s, _, _ = strings.Cut(s, "\n")
+		if strings.Contains(s, "No such file") || strings.Contains(s, "not found") {
+			return "not installed"
+		}
+		return s
+	}
+	active, enabled = firstLine(active), firstLine(enabled)
+	if active != "active" || enabled != "enabled" {
+		r.add("zones", Warn, "ACL watcher %s: %s, %s; zone files the panel creates may stay unreadable by the agent. As root run: paneldns-agent fix-acls && systemctl enable --now %s", ACLPathUnit, active, enabled, ACLPathUnit)
+		return
+	}
+	r.add("zones", OK, "ACL watcher %s: active, enabled", ACLPathUnit)
+	b, ok := env.Source.(*source.BIND)
+	if !ok || listing == nil || env.ReadFile == nil || env.WatchDropIn == "" {
+		return
+	}
+	text, err := env.ReadFile(env.WatchDropIn)
+	if err != nil {
+		r.add("zones", Warn, "ACL watcher: %v", err)
+		return
+	}
+	watched := map[string]bool{}
+	for _, line := range strings.Split(string(text), "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "PathChanged="); ok {
+			watched[v] = true
+		}
+	}
+	missing := map[string]bool{}
+	for _, z := range listing.Zones {
+		if d := path.Dir(b.ZoneFile(z)); !watched[d] {
+			missing[d] = true
+		}
+	}
+	if len(missing) > 0 {
+		var dirs []string
+		for d := range missing {
+			dirs = append(dirs, d)
+		}
+		sort.Strings(dirs)
+		r.add("zones", Warn, "zone directories the ACL watcher doesn't watch: %s; as root run: paneldns-agent fix-acls (it updates %s)", limitList(dirs, 10), env.WatchDropIn)
+	}
 }
 
 func limitList(s []string, n int) string {
