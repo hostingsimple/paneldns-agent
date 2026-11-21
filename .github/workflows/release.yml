@@ -59,6 +59,11 @@ jobs:
       - name: install GoReleaser (pinned, checksum verified)
         run: sh packaging/ci/install-goreleaser.sh "$RUNNER_TEMP/bin"
       - name: build packages
+        # A commit can carry more than one tag (v0.1.0-p5.1 and v0.1.0 on the same commit):
+        # goreleaser then picks one by version sort, which put 0.1.0-p5.1 into the v0.1.0
+        # binary and failed the reproducibility check below. Build the tag that was pushed.
+        env:
+          GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
         run: |
           "$RUNNER_TEMP/bin/goreleaser" check
           "$RUNNER_TEMP/bin/goreleaser" release --clean --skip=publish
