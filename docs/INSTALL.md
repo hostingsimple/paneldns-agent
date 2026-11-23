@@ -41,8 +41,14 @@ The `.repo` file sets `gpgcheck=1`, `repo_gpgcheck=1` and `metadata_expire=1d`. 
 ## Enrol
 
 ```sh
-sudo paneldns-agent enrol --url https://app.paneldns.example --code <code from the dashboard>
+sudo paneldns-agent enrol --url https://app.paneldns.example --code - <<< '<code from the dashboard>'
 ```
+
+`--code -` reads the code from standard input. A code written as `--code <code>` also works, but
+while enrol runs every user of the server can read it in the process list (`ps`), and someone
+who sends it to PanelDNS first enrols a key of their own; enrol warns when it gets the code that
+way. `PANELDNS_ENROL_CODE` works too, but not through `sudo VAR=value`, which puts it back on a
+command line.
 
 [`packaging/install.sh`](../packaging/install.sh) runs the same commands, refuses a key with a
 different fingerprint, and can enrol in one go. Download it, read it, then run it as root; never

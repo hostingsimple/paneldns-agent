@@ -17,12 +17,14 @@ const usage = `paneldns-agent: Panel Sync agent for PanelDNS
 Usage:
   paneldns-agent run       [--config FILE]   run the sync loop (systemd ExecStart)
   paneldns-agent --check   [--config FILE] [--zone NAME] [--json]
-  paneldns-agent enrol     --url URL --code CODE [--config FILE] [--no-acl] [--no-start]
+  paneldns-agent enrol     --url URL --code - [--config FILE] [--no-acl] [--no-start]
   paneldns-agent fix-acls  [--config FILE]   (root) restore the agent's read ACLs
   paneldns-agent version
 
-The enrolment code can also be given in the PANELDNS_ENROL_CODE
-environment variable.
+--code - reads the enrolment code from standard input
+(paneldns-agent enrol --url URL --code - <<< 'CODE'); it can also be given
+in PANELDNS_ENROL_CODE. A code written on the command line is visible to
+every user of the server while enrol runs.
 `
 
 func main() {

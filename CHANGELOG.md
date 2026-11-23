@@ -12,6 +12,10 @@ All notable changes to this project are listed here. The format follows
   process runs as root or as the `named`/`bind` user. Before, any process called `named` counted,
   so a local user could choose the config enrol reads, and with it the zones the agent pushes and
   the files enrol grants it read access to.
+- `enrol --code -` reads the one-time code from standard input, and `install.sh --code -` does
+  the same. A code on the command line is visible to every user of the server while enrol runs,
+  and whoever sends it first enrols their own key; enrol and `install.sh` now warn when given
+  the code that way. The dashboard's install command should switch to `--code - <<< 'CODE'`.
 
 ### Added
 
