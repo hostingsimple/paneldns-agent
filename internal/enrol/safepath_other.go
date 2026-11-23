@@ -16,3 +16,6 @@ func lstatOwnerOS(p string) (fs.FileMode, uint32, error) {
 	}
 	return fi.Mode(), ^uint32(0), nil
 }
+
+// linkCount is a file's number of hard links (1 outside Unix).
+func linkCount(fs.FileInfo) uint64 { return 1 }

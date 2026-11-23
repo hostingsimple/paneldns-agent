@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -137,5 +138,21 @@ func TestEnrolErrors(t *testing.T) {
 				t.Fatal("key written although enrolment failed")
 			}
 		})
+	}
+}
+
+// Enrol hands the agent user its state directory and the files enrol
+// wrote, nothing else it finds there.
+func TestStateFilesOnlyTheKnownOnes(t *testing.T) {
+	dir := t.TempDir()
+	for _, n := range []string{"agent.key", "identity.json", "sequence.json", "state.json", "planted", "sub/x"} {
+		p := filepath.Join(dir, filepath.FromSlash(n))
+		os.MkdirAll(filepath.Dir(p), 0o700)
+		os.WriteFile(p, nil, 0o600)
+	}
+	got := stateFiles(dir)
+	want := []string{dir, filepath.Join(dir, "agent.key"), filepath.Join(dir, "identity.json"), filepath.Join(dir, "sequence.json"), filepath.Join(dir, "state.json")}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %q\nwant %q", got, want)
 	}
 }

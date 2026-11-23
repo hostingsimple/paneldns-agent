@@ -34,6 +34,9 @@ All notable changes to this project are listed here. The format follows
   socket listening on the API address belongs to root or the `pdns`/`powerdns` user, and sends
   no API key otherwise. Any local user can listen on a free port above 1023, for example while
   PowerDNS restarts.
+- Enrol (root) changes the owner of the state directory and of the files it wrote there only,
+  instead of everything it finds in that agent-owned directory, and skips files with more than
+  one hard link.
 
 ### Added
 
