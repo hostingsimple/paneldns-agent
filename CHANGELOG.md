@@ -6,6 +6,13 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+### Security
+
+- Enrol now trusts a running `named` process to say which named.conf it reads only when the
+  process runs as root or as the `named`/`bind` user. Before, any process called `named` counted,
+  so a local user could choose the config enrol reads, and with it the zones the agent pushes and
+  the files enrol grants it read access to.
+
 ### Added
 
 - Root ACL watcher (DECISIONS D-30): `paneldns-agent fix-acls` (root only) re-grants the agent's

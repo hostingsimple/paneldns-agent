@@ -194,12 +194,22 @@ func runningNamedConf() (conf, how string) {
 		return "", ""
 	}
 	found := false
+	var trusted map[string]bool
 	for _, e := range entries {
 		if !e.IsDir() || strings.Trim(e.Name(), "0123456789") != "" {
 			continue
 		}
 		comm, err := os.ReadFile(rooted("/proc/" + e.Name() + "/comm"))
 		if err != nil || strings.TrimSpace(string(comm)) != "named" {
+			continue
+		}
+		// Any local user can start a process called "named" with a -c of
+		// their choosing; only one running as root or as named's own user
+		// is the real named.
+		if trusted == nil {
+			trusted = namedUIDs()
+		}
+		if !procRunsAs(e.Name(), trusted) {
 			continue
 		}
 		found = true
@@ -230,6 +240,46 @@ func runningNamedConf() (conf, how string) {
 		}
 	}
 	return "", ""
+}
+
+// namedUIDs are the uids a real named runs as: root, which starts it, and
+// the named or bind user it switches to with -u (from /etc/passwd; system
+// users are always local).
+func namedUIDs() map[string]bool {
+	uids := map[string]bool{"0": true}
+	b, err := os.ReadFile(rooted("/etc/passwd"))
+	if err != nil {
+		return uids
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		f := strings.Split(line, ":")
+		if len(f) > 2 && (f[0] == "named" || f[0] == "bind") && f[2] != "" {
+			uids[f[2]] = true
+		}
+	}
+	return uids
+}
+
+// procRunsAs reports whether every uid of a process (real, effective,
+// saved, file system; the Uid: line of /proc/PID/status) is in uids.
+func procRunsAs(pid string, uids map[string]bool) bool {
+	b, err := os.ReadFile(rooted("/proc/" + pid + "/status"))
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 2 || f[0] != "Uid:" {
+			continue
+		}
+		for _, u := range f[1:] {
+			if !uids[u] {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 // otherNamedConfs lists the usual named.conf locations that exist besides chosen.

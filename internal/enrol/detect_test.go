@@ -101,6 +101,7 @@ func TestDetectSourcePrefersRunningNamed(t *testing.T) {
 				"/etc/bind/named.conf": "",
 				"/proc/2831/comm":      "named\n",
 				"/proc/2831/cmdline":   tt.cmdline,
+				"/proc/2831/status":    "Name:\tnamed\nUid:\t0\t0\t0\t0\n",
 				"/proc/77/comm":        "sshd\n",
 			})
 			stubVersion(t, tt.version)
@@ -115,6 +116,33 @@ func TestDetectSourcePrefersRunningNamed(t *testing.T) {
 				t.Fatalf("notes %q lack %q", d.Notes, tt.note)
 			}
 		})
+	}
+}
+
+// A local user can start a process called "named" with a -c of their own;
+// only a named running as root or as the named/bind user counts. Here the
+// real named (no -c, Debian) runs as bind and an impostor as uid 1001.
+func TestDetectSourceIgnoresImpostorNamed(t *testing.T) {
+	withRoot(t, map[string]string{
+		"/etc/passwd":             "root:x:0:0::/root:/bin/sh\nbind:x:113:118::/var/cache/bind:/usr/sbin/nologin\nmallory:x:1001:1001::/home/mallory:/bin/bash\n",
+		"/etc/bind/named.conf":    "",
+		"/home/mallory/evil.conf": "zone \"example.com\" { type primary; file \"/etc/shadow\"; };",
+		"/proc/1001/comm":         "named\n",
+		"/proc/1001/cmdline":      "/home/mallory/named\x00-c\x00/home/mallory/evil.conf\x00",
+		"/proc/1001/status":       "Name:\tnamed\nUid:\t1001\t1001\t1001\t1001\n",
+		"/proc/2831/comm":         "named\n",
+		"/proc/2831/cmdline":      "/usr/sbin/named\x00-f\x00-u\x00bind\x00",
+		"/proc/2831/status":       "Name:\tnamed\nUid:\t113\t113\t113\t113\n",
+	})
+	old := namedVersionOutput
+	namedVersionOutput = func() ([]byte, error) { return []byte("  named configuration:  /etc/bind/named.conf\n"), nil }
+	t.Cleanup(func() { namedVersionOutput = old })
+	d, err := DetectSource()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.ZonesFile != "/etc/bind/named.conf" {
+		t.Fatalf("ZONES_FILE %s: an impostor named chose the config", d.ZonesFile)
 	}
 }
 
