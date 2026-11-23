@@ -25,6 +25,8 @@ All notable changes to this project are listed here. The format follows
   (at any depth) leaves named's directory and the zone directories, or names the agent's state
   directory or key material, is not read (reported as `read_failed`). Before, `named-compilezone`
   and the built-in parser read any file the agent could open into the zone.
+- The PowerDNS API client no longer follows redirects. Go forwards the `X-API-Key` header
+  (a read-write key) to the redirect target, wherever it is.
 
 ### Added
 

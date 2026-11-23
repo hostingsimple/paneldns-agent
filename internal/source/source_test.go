@@ -355,3 +355,28 @@ func TestBINDRefusesIncludesOutsideZoneDirectories(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// The PowerDNS API key is read-write: a redirect must not carry it to
+// another address.
+func TestPowerDNSDoesNotFollowRedirects(t *testing.T) {
+	dir := t.TempDir()
+	keyFile := path.Join(dir, "key")
+	os.WriteFile(keyFile, []byte("secret-test-key\n"), 0o600)
+	leaked := ""
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		leaked = r.Header.Get("X-API-Key")
+		w.Write([]byte(`[]`))
+	}))
+	defer other.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+r.URL.RequestURI(), http.StatusFound)
+	}))
+	defer srv.Close()
+	p := &PowerDNS{BaseURL: srv.URL, KeyFile: keyFile}
+	if _, err := p.List(context.Background()); err == nil || !strings.Contains(err.Error(), "302") {
+		t.Errorf("redirect not refused: %v", err)
+	}
+	if leaked != "" {
+		t.Fatalf("the API key reached the redirect target: %q", leaked)
+	}
+}

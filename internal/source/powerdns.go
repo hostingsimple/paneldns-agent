@@ -42,7 +42,12 @@ func (p *PowerDNS) client() *http.Client {
 	if p.Client != nil {
 		return p.Client
 	}
-	return &http.Client{Timeout: 30 * time.Second}
+	return &http.Client{
+		Timeout: 30 * time.Second,
+		// Never follow a redirect: Go would send X-API-Key (a read-write
+		// key) along to wherever it points.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 }
 
 func (p *PowerDNS) apiKey(reload bool) (string, error) {
