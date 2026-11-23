@@ -30,6 +30,10 @@ All notable changes to this project are listed here. The format follows
 - A zone whose name starts with `-` is not passed to `named-compilezone`, where it would be read
   as an option. Zone files and `$INCLUDE`d files the agent reads itself are capped at 16 MB, the
   limit `named-compilezone` output already had.
+- Before each PowerDNS API request the agent checks, in `/proc/net/tcp` and `tcp6`, that every
+  socket listening on the API address belongs to root or the `pdns`/`powerdns` user, and sends
+  no API key otherwise. Any local user can listen on a free port above 1023, for example while
+  PowerDNS restarts.
 
 ### Added
 

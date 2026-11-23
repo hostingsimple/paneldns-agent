@@ -94,6 +94,12 @@ Zones of kind `Native`, `Master` or `Primary` are read; `Slave`, `Secondary`, `P
 change made without a serial change is picked up by the next full resync, which re-reads every
 zone (D-13). The export is accepted as `text/plain` or as the older `{"zone": "..."}` JSON.
 
+**Who listens on the API port.** The API key is read-write and travels in clear text to a
+loopback port, which any local user can take while PowerDNS is not listening (a restart). Before
+each request the agent reads `/proc/net/tcp` and `tcp6` and refuses, sending nothing, unless
+every socket listening on the API address (or the wildcard of its family) belongs to root or the
+`pdns`/`powerdns` user from `/etc/passwd`. Root covers a proxy such as `docker-proxy`.
+
 ## D-11 Change detection (7.4)
 
 The fingerprint is: BIND, the zone file's size and mtime (nanoseconds), the journal's, the

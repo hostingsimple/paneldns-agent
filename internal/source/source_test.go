@@ -255,7 +255,7 @@ func TestPowerDNS(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	p := &PowerDNS{BaseURL: srv.URL, KeyFile: keyFile}
+	p := &PowerDNS{BaseURL: srv.URL, KeyFile: keyFile, CheckListener: noListenerCheck}
 	ctx := context.Background()
 	l, err := p.List(ctx)
 	if err != nil {
@@ -278,16 +278,16 @@ func TestPowerDNS(t *testing.T) {
 	if r, _ := p.Running(ctx); r != RunningYes {
 		t.Fatalf("running %v", r)
 	}
-	bad := &PowerDNS{BaseURL: srv.URL, KeyFile: path.Join(dir, "absent")}
+	bad := &PowerDNS{BaseURL: srv.URL, KeyFile: path.Join(dir, "absent"), CheckListener: noListenerCheck}
 	if _, err := bad.List(ctx); err == nil {
 		t.Fatal("missing key file accepted")
 	}
 	os.WriteFile(keyFile, []byte("wrong"), 0o600)
-	p2 := &PowerDNS{BaseURL: srv.URL, KeyFile: keyFile}
+	p2 := &PowerDNS{BaseURL: srv.URL, KeyFile: keyFile, CheckListener: noListenerCheck}
 	if _, err := p2.List(ctx); err == nil || !strings.Contains(err.Error(), "unauthorized") {
 		t.Fatalf("wrong key: %v", err)
 	}
-	down := &PowerDNS{BaseURL: "http://127.0.0.1:1", KeyFile: keyFile}
+	down := &PowerDNS{BaseURL: "http://127.0.0.1:1", KeyFile: keyFile, CheckListener: noListenerCheck}
 	if r, _ := down.Running(ctx); r != RunningNo {
 		t.Fatalf("down server running %v", r)
 	}
@@ -372,7 +372,7 @@ func TestPowerDNSDoesNotFollowRedirects(t *testing.T) {
 		http.Redirect(w, r, other.URL+r.URL.RequestURI(), http.StatusFound)
 	}))
 	defer srv.Close()
-	p := &PowerDNS{BaseURL: srv.URL, KeyFile: keyFile}
+	p := &PowerDNS{BaseURL: srv.URL, KeyFile: keyFile, CheckListener: noListenerCheck}
 	if _, err := p.List(context.Background()); err == nil || !strings.Contains(err.Error(), "302") {
 		t.Errorf("redirect not refused: %v", err)
 	}

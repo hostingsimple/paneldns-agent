@@ -27,6 +27,9 @@ type PowerDNS struct {
 	// ServerID is the API server id; spec 7.3 fixes it to "localhost".
 	ServerID string
 	Client   *http.Client
+	// CheckListener refuses an API address whose listening socket is not
+	// PowerDNS's (listener.go); nil checks /proc/net/tcp. Tests replace it.
+	CheckListener func(base string) error
 
 	mu  sync.Mutex
 	key string
@@ -80,6 +83,13 @@ func (p *PowerDNS) get(ctx context.Context, rel string, limit int64) (*http.Resp
 		key, err := p.apiKey(attempt > 0)
 		if err != nil {
 			return nil, nil, err
+		}
+		check := p.CheckListener
+		if check == nil {
+			check = func(base string) error { return checkListener(base, osReadFile) }
+		}
+		if err := check(p.BaseURL); err != nil {
+			return nil, nil, fmt.Errorf("PowerDNS API: %w", err)
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(p.BaseURL, "/")+rel, nil)
 		if err != nil {
