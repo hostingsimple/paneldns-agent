@@ -16,6 +16,11 @@ All notable changes to this project are listed here. The format follows
   the same. A code on the command line is visible to every user of the server while enrol runs,
   and whoever sends it first enrols their own key; enrol and `install.sh` now warn when given
   the code that way. The dashboard's install command should switch to `--code - <<< 'CODE'`.
+- The read-access plan of enrol and `fix-acls` (both root) no longer grants an ACL through a
+  symbolic link unless root owns the link and the directory holding it can only be changed by
+  root. `setfacl` follows links, so a link a user or the `named` user could plant in a planned
+  path redirected the grant to any file. Such paths are skipped with a warning; that zone then
+  fails to read and is reported.
 
 ### Added
 

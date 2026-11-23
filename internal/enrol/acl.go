@@ -109,6 +109,10 @@ func PlanACLs(cfg config.Config) (*ACLPlan, error) {
 			read[cfg.OwnersFile] = true
 		}
 	}
+	// setfacl follows symbolic links: never grant through one a user
+	// could have planted.
+	p.Warnings = append(p.Warnings, dropUntrusted(read)...)
+	p.Warnings = append(p.Warnings, dropUntrusted(dirs)...)
 	traverse := map[string]bool{}
 	for f := range read {
 		addParents(path.Dir(f), traverse)
@@ -119,6 +123,7 @@ func PlanACLs(cfg config.Config) (*ACLPlan, error) {
 	for d := range dirs {
 		delete(traverse, d)
 	}
+	p.Warnings = append(p.Warnings, dropUntrusted(traverse)...)
 	p.Read = sortedKeys(read)
 	p.Dirs = sortedKeys(dirs)
 	p.Traverse = sortedKeys(traverse)

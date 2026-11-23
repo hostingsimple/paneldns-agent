@@ -218,6 +218,14 @@ do lose these ACLs (the cPanel lab test found new zone files created 0600, so ma
 watcher of D-30 restores them. `--check` opens every zone file as the agent and fails with the
 list of unreadable ones.
 
+**Symbolic links.** `setfacl` follows symbolic links, so the plan only keeps a path whose
+links root owns and sit in directories only root can change (owned by root and not writable by
+group or others, or sticky), and whose target is not key material; Plesk's `/etc/named.conf`
+link into its chroot qualifies. A link a user or `named` could have made (a home directory
+component on HestiaCP, a link in a `named`-writable zone directory) drops that path with a
+warning. This closes planted links, not a race in a directory a user can write while enrol or
+`fix-acls` runs.
+
 **`$INCLUDE` in zone files** (found by the CI ACL test). The plan follows `$INCLUDE` in every
 text-format zone file, recursively up to 8 levels (the parser's limit), resolving relative names
 against named's `directory` as named and `named-compilezone -w` do, and absolute names inside the
