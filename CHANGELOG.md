@@ -6,6 +6,10 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.1.4] - not yet released
+
+Security review 2026-11 (agent findings A-1 to A-10; A-3 for planted links only).
+
 ### Security
 
 - Enrol now trusts a running `named` process to say which named.conf it reads only when the
@@ -37,6 +41,21 @@ All notable changes to this project are listed here. The format follows
 - Enrol (root) changes the owner of the state directory and of the files it wrote there only,
   instead of everything it finds in that agent-owned directory, and skips files with more than
   one hard link.
+- A zone directory that also holds named's configuration or key files (Debian's `/etc/bind`, a
+  directory with `rndc.key`, `*.private` or `*.key` files) no longer gets a default ACL. A key
+  created there later (`rndc-confgen -a`, `tsig-keygen > x.key`) inherited
+  `u:paneldns-agent:r`. New zone files in such a directory get their read ACL from the root
+  watcher. `fix-acls` removes the agent's default entry that an earlier version left on such a
+  directory, and the agent's entry on key files there, without recalculating the mask, and the
+  plan warns about key files every local user can read (DECISIONS D-22).
+
+### Fixed
+
+- Enrol treated a bare `api` line in `pdns.conf` as unset and reported the PowerDNS API as off.
+  PowerDNS reads a bare boolean key as on; `api=no`, `api=off` and `api=false` still count as
+  off.
+
+## [0.1.3] and earlier
 
 ### Added
 
