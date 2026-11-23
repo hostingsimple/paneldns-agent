@@ -310,3 +310,48 @@ func TestBINDListingReportsInlineKey(t *testing.T) {
 		t.Fatalf("false positive: %v", l.InlineKey)
 	}
 }
+
+// A zone file's $INCLUDE may only reach named's directory and the zone
+// directories (the files enrol grants access to), never the agent's own
+// state directory or key material, whether named-compilezone or the
+// built-in parser reads the zone.
+func TestBINDRefusesIncludesOutsideZoneDirectories(t *testing.T) {
+	for _, tt := range []struct{ name, include, want string }{
+		{"agent key", "$INCLUDE /var/lib/paneldns-agent/agent.key\n", "never reads"},
+		{"etc", "$INCLUDE /etc/passwd\n", "outside named's directory"},
+		{"dot-dot", "$INCLUDE ../../etc/passwd\n", "outside named's directory"},
+		{"nested", "$INCLUDE inc/www.db\n", "outside named's directory"},
+		{"dnssec key", "$INCLUDE \"Kexample.com.+013+12345.private\"\n", "never reads"},
+	} {
+		for _, compile := range []bool{false, true} {
+			m := newFS()
+			m.put("/var/named/example.com.db", strings.Replace(exampleCom, "$INCLUDE inc/www.db\n", tt.include, 1))
+			if tt.name == "nested" {
+				m.put("/var/named/inc/www.db", "$INCLUDE /home/someone/public_html/wp-config.php\n")
+			}
+			m.put("/var/lib/paneldns-agent/agent.key", "-----BEGIN PRIVATE KEY-----\n")
+			m.put("/etc/passwd", "root:x:0:0::/root:/bin/sh\n")
+			b := m.bind(&BIND{ConfFile: "/etc/named.conf", NoCompilezone: !compile, Compilezone: "/usr/sbin/named-compilezone"})
+			ran := false
+			b.Run = func(context.Context, []string) ([]byte, []byte, error) { ran = true; return nil, nil, os.ErrInvalid }
+			l, err := b.List(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = b.Read(context.Background(), l.Zones[0])
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("%s (compile %v): got %v, want %q", tt.name, compile, err, tt.want)
+			}
+			if ran {
+				t.Errorf("%s: named-compilezone ran on a zone with a refused $INCLUDE", tt.name)
+			}
+		}
+	}
+	// An include inside the zone directories still works.
+	m := newFS()
+	b := m.bind(&BIND{ConfFile: "/etc/named.conf", NoCompilezone: true})
+	l, _ := b.List(context.Background())
+	if _, err := b.Read(context.Background(), l.Zones[0]); err != nil {
+		t.Fatal(err)
+	}
+}

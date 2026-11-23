@@ -21,6 +21,10 @@ All notable changes to this project are listed here. The format follows
   root. `setfacl` follows links, so a link a user or the `named` user could plant in a planned
   path redirected the grant to any file. Such paths are skipped with a warning; that zone then
   fails to read and is reported.
+- The running agent applies the `$INCLUDE` rule enrol already enforced: a zone whose `$INCLUDE`
+  (at any depth) leaves named's directory and the zone directories, or names the agent's state
+  directory or key material, is not read (reported as `read_failed`). Before, `named-compilezone`
+  and the built-in parser read any file the agent could open into the zone.
 
 ### Added
 

@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hostingsimple/paneldns-agent/internal/config"
 	"github.com/hostingsimple/paneldns-agent/internal/namedconf"
 	"github.com/hostingsimple/paneldns-agent/internal/zonefile"
 )
@@ -241,6 +242,12 @@ func (b *BIND) Read(ctx context.Context, ref ZoneRef) ([]zonefile.RR, error) {
 	}
 	defer func() { <-sem }()
 
+	roots := b.includeRoots(conf)
+	if z.Format == "text" {
+		if err := b.checkIncludes(conf, z, roots); err != nil {
+			return nil, err
+		}
+	}
 	origin := z.Name
 	if bin := b.CompilezonePath(); bin != "" {
 		out, err := b.compile(ctx, CompileArgs(bin, conf, z))
@@ -262,8 +269,87 @@ func (b *BIND) Read(ctx context.Context, ref ZoneRef) ([]zonefile.RR, error) {
 	}
 	return zonefile.Parse(data, zonefile.Options{
 		Origin: origin, File: z.File, IncludeDir: conf.Directory,
-		IncludeRoot: b.Chroot, ReadFile: b.readFile,
+		IncludeRoot: b.Chroot, ReadFile: func(name string) ([]byte, error) {
+			if err := includeAllowed(path.Clean(name), roots); err != nil {
+				return nil, err
+			}
+			return b.readFile(name)
+		},
 	})
+}
+
+// includeDirective matches a $INCLUDE line's file name, quoted or bare.
+var includeDirective = regexp.MustCompile(`(?im)^\$INCLUDE[ \t]+("[^"\r\n]*"|[^ \t;\r\n]+)`)
+
+// includeRoots are the directories a zone may $INCLUDE from: named's
+// directory and every zone file's directory, the same rule enrol grants
+// read access by (docs/DECISIONS.md D-22).
+func (b *BIND) includeRoots(conf *namedconf.Conf) []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	roots := []string{conf.Directory}
+	for f := range b.zones {
+		roots = append(roots, path.Dir(f))
+	}
+	return roots
+}
+
+// includeAllowed refuses an $INCLUDE target outside roots, in the agent's
+// state directory or at key material. The agent would otherwise read any
+// file it can open, its own private key included, into a zone, and report
+// the parse errors to PanelDNS.
+func includeAllowed(target string, roots []string) error {
+	base := path.Base(target)
+	if target == config.StateDir || strings.HasPrefix(target, config.StateDir+"/") ||
+		strings.HasSuffix(base, ".private") || base == "rndc.key" || base == "rndc.conf" || base == "pdns.conf" {
+		return fmt.Errorf("$INCLUDE %s: the agent never reads this file", target)
+	}
+	for _, r := range roots {
+		r = strings.TrimSuffix(path.Clean(r), "/")
+		if strings.HasPrefix(target, r+"/") {
+			return nil
+		}
+	}
+	return fmt.Errorf("$INCLUDE %s is outside named's directory and the zone directories; not read", target)
+}
+
+// checkIncludes follows $INCLUDE through a text zone file and the files it
+// includes (as named-compilezone will) and refuses the zone when one is
+// not allowed. Files that can't be read are left to named-compilezone,
+// which reports them.
+func (b *BIND) checkIncludes(conf *namedconf.Conf, z namedconf.Zone, roots []string) error {
+	seen := map[string]bool{z.File: true}
+	var walk func(file string, depth int) error
+	walk = func(file string, depth int) error {
+		data, err := b.readFile(file)
+		if err != nil {
+			return nil
+		}
+		for _, m := range includeDirective.FindAllSubmatch(data, -1) {
+			p := strings.Trim(string(m[1]), `"`)
+			if !path.IsAbs(p) {
+				p = path.Join(conf.Directory, p)
+			} else if b.Chroot != "" {
+				p = path.Join(b.Chroot, p)
+			}
+			p = path.Clean(p)
+			if err := includeAllowed(p, roots); err != nil {
+				return fmt.Errorf("zone %s (%s): %w", z.Name, file, err)
+			}
+			if depth+1 > zonefile.MaxIncludeDepth {
+				return fmt.Errorf("zone %s (%s): $INCLUDE nested deeper than %d", z.Name, file, zonefile.MaxIncludeDepth)
+			}
+			if seen[p] {
+				continue
+			}
+			seen[p] = true
+			if err := walk(p, depth+1); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return walk(z.File, 0)
 }
 
 func (b *BIND) compile(ctx context.Context, argv []string) ([]byte, error) {
