@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -69,6 +70,33 @@ func (b *BIND) readFile(p string) ([]byte, error) {
 		return b.ReadFile(p)
 	}
 	return os.ReadFile(p)
+}
+
+// readZoneFile reads a zone file or an $INCLUDEd file, at most
+// MaxCompiledSize bytes: the built-in parser and the $INCLUDE check hold
+// the whole file in memory, under the unit's MemoryMax.
+func (b *BIND) readZoneFile(p string) ([]byte, error) {
+	var data []byte
+	if b.ReadFile != nil {
+		d, err := b.ReadFile(p)
+		if err != nil {
+			return nil, err
+		}
+		data = d
+	} else {
+		f, err := os.Open(p)
+		if err != nil {
+			return nil, err
+		}
+		defer f.Close()
+		if data, err = io.ReadAll(io.LimitReader(f, MaxCompiledSize+1)); err != nil {
+			return nil, err
+		}
+	}
+	if len(data) > MaxCompiledSize {
+		return nil, fmt.Errorf("%s is larger than %d bytes", p, MaxCompiledSize)
+	}
+	return data, nil
 }
 
 func (b *BIND) stat(p string) (fs.FileInfo, error) {
@@ -242,6 +270,11 @@ func (b *BIND) Read(ctx context.Context, ref ZoneRef) ([]zonefile.RR, error) {
 	}
 	defer func() { <-sem }()
 
+	// The zone name is a positional argument of named-compilezone: one
+	// starting with "-" would be read as an option.
+	if strings.HasPrefix(z.Name, "-") {
+		return nil, fmt.Errorf("zone name %q starts with \"-\"; not read", z.Name)
+	}
 	roots := b.includeRoots(conf)
 	if z.Format == "text" {
 		if err := b.checkIncludes(conf, z, roots); err != nil {
@@ -263,7 +296,7 @@ func (b *BIND) Read(ctx context.Context, ref ZoneRef) ([]zonefile.RR, error) {
 	if _, err := b.stat(z.Journal); err == nil {
 		return nil, fmt.Errorf("zone %s has a journal (%s); install named-compilezone to apply it", z.Name, z.Journal)
 	}
-	data, err := b.readFile(z.File)
+	data, err := b.readZoneFile(z.File)
 	if err != nil {
 		return nil, err
 	}
@@ -273,7 +306,7 @@ func (b *BIND) Read(ctx context.Context, ref ZoneRef) ([]zonefile.RR, error) {
 			if err := includeAllowed(path.Clean(name), roots); err != nil {
 				return nil, err
 			}
-			return b.readFile(name)
+			return b.readZoneFile(name)
 		},
 	})
 }
@@ -315,15 +348,18 @@ func includeAllowed(target string, roots []string) error {
 
 // checkIncludes follows $INCLUDE through a text zone file and the files it
 // includes (as named-compilezone will) and refuses the zone when one is
-// not allowed. Files that can't be read are left to named-compilezone,
-// which reports them.
+// not allowed. Files that don't exist or can't be opened are left to
+// named-compilezone, which reports them.
 func (b *BIND) checkIncludes(conf *namedconf.Conf, z namedconf.Zone, roots []string) error {
 	seen := map[string]bool{z.File: true}
 	var walk func(file string, depth int) error
 	walk = func(file string, depth int) error {
-		data, err := b.readFile(file)
+		data, err := b.readZoneFile(file)
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
+			return nil // named-compilezone reports it
+		}
 		if err != nil {
-			return nil
+			return fmt.Errorf("zone %s: %w", z.Name, err)
 		}
 		for _, m := range includeDirective.FindAllSubmatch(data, -1) {
 			p := strings.Trim(string(m[1]), `"`)

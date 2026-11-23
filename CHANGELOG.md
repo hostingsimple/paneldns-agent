@@ -27,6 +27,9 @@ All notable changes to this project are listed here. The format follows
   and the built-in parser read any file the agent could open into the zone.
 - The PowerDNS API client no longer follows redirects. Go forwards the `X-API-Key` header
   (a read-write key) to the redirect target, wherever it is.
+- A zone whose name starts with `-` is not passed to `named-compilezone`, where it would be read
+  as an option. Zone files and `$INCLUDE`d files the agent reads itself are capped at 16 MB, the
+  limit `named-compilezone` output already had.
 
 ### Added
 

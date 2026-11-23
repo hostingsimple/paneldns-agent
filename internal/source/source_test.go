@@ -380,3 +380,37 @@ func TestPowerDNSDoesNotFollowRedirects(t *testing.T) {
 		t.Fatalf("the API key reached the redirect target: %q", leaked)
 	}
 }
+
+// A zone name is a positional argument of named-compilezone; one starting
+// with "-" must not reach it as an option.
+func TestBINDRefusesZoneNameLikeAnOption(t *testing.T) {
+	m := newFS()
+	m.put("/etc/named.conf", `options { directory "/var/named"; };
+zone "-o/var/lib/paneldns-agent/x" { type master; file "example.com.db"; };`)
+	b := m.bind(&BIND{ConfFile: "/etc/named.conf", Compilezone: "/usr/sbin/named-compilezone"})
+	ran := false
+	b.Run = func(context.Context, []string) ([]byte, []byte, error) { ran = true; return nil, nil, nil }
+	l, err := b.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Read(context.Background(), l.Zones[0]); err == nil || ran {
+		t.Fatalf("zone %q read (named-compilezone ran: %v): %v", l.Zones[0].Name, ran, err)
+	}
+}
+
+// The built-in parser holds the zone in memory: a file over the cap is
+// refused instead of risking the unit's MemoryMax.
+func TestBINDFallbackCapsZoneSize(t *testing.T) {
+	m := newFS()
+	big := "$TTL 60\n@ IN SOA ns1.example.net. h.example.net. 7 1 1 1 1\n" + strings.Repeat("a IN A 192.0.2.1\n", MaxCompiledSize/17+1)
+	m.put("/var/named/example.net.db", big)
+	b := m.bind(&BIND{ConfFile: "/etc/named.conf", NoCompilezone: true})
+	l, err := b.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Read(context.Background(), l.Zones[1]); err == nil || !strings.Contains(err.Error(), "larger than") {
+		t.Fatalf("oversized zone: %v", err)
+	}
+}
