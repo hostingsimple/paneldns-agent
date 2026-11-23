@@ -197,3 +197,65 @@ func TestFixACLsErrorsAndMissing(t *testing.T) {
 		t.Fatalf("%+v", readErr)
 	}
 }
+
+// Review A-7: fix-acls never grants the default ACL on a NoDefault
+// directory and removes the agent's own default entry an older version
+// left there; it removes the agent's entry from Strip files and grants
+// them nothing, even when a plan also names them for reading.
+func TestFixCommandsKeyDirectories(t *testing.T) {
+	const dir = fs.ModeDir
+	dirOK := &ACL{UserObj: 7, GroupObj: 5, Mask: 5, HasMask: true, Users: map[uint32]Perm{agentUID: 5}}
+	tests := []struct {
+		name     string
+		kind     string // nodefault, strip, strip+read
+		mode     fs.FileMode
+		access   *ACL
+		def      *ACL
+		want     []string
+		wantFine int
+	}{
+		{name: "old agent default entry removed", kind: "nodefault", mode: dir | 0o750, access: dirOK,
+			def:  &ACL{UserObj: 7, GroupObj: 5, Mask: 5, HasMask: true, Users: map[uint32]Perm{agentUID: 4, 1000: 4}},
+			want: []string{"setfacl -n -d -x u:990"}},
+		{name: "no default ACL: rx only, none added", kind: "nodefault", mode: dir | 0o750,
+			want: []string{"setfacl -m u:990:r-x,m::r-x"}},
+		{name: "default ACL of others left alone", kind: "nodefault", mode: dir | 0o750, access: dirOK,
+			def: &ACL{UserObj: 7, GroupObj: 5, Mask: 5, HasMask: true, Users: map[uint32]Perm{1000: 4}}, wantFine: 1},
+		{name: "inherited entry on a key file removed", kind: "strip", mode: 0o640,
+			access: &ACL{UserObj: 6, GroupObj: 4, Mask: 4, HasMask: true, Users: map[uint32]Perm{agentUID: 4}},
+			want:   []string{"setfacl -n -x u:990"}},
+		{name: "masked inherited entry removed too", kind: "strip", mode: 0o600,
+			access: &ACL{UserObj: 6, GroupObj: 4, HasMask: true, Users: map[uint32]Perm{agentUID: 4}},
+			want:   []string{"setfacl -n -x u:990"}},
+		{name: "key file without an agent entry: nothing granted", kind: "strip", mode: 0o600, wantFine: 1},
+		{name: "key file a plan also names for reading: stripped, not granted", kind: "strip+read", mode: 0o640,
+			access: &ACL{UserObj: 6, GroupObj: 4, Mask: 4, HasMask: true, Users: map[uint32]Perm{agentUID: 4}},
+			want:   []string{"setfacl -n -x u:990"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			const p = "/etc/bind/x"
+			plan := &ACLPlan{}
+			switch tt.kind {
+			case "nodefault":
+				plan.Dirs, plan.NoDefault = []string{p}, []string{p}
+			case "strip":
+				plan.Strip = []string{p}
+			case "strip+read":
+				plan.Strip, plan.Read = []string{p}, []string{p}
+			}
+			f := fakeFS{p: {tt.mode, tt.access, tt.def}}
+			cmds, res := FixCommands(plan, FixOptions{UID: agentUID, Stat: f.stat, Read: f.read})
+			var got []string
+			for _, c := range cmds[p] {
+				if c[len(c)-1] != p {
+					t.Fatalf("command not on %s: %q", p, c)
+				}
+				got = append(got, strings.Join(c[:len(c)-1], " "))
+			}
+			if !reflect.DeepEqual(got, tt.want) || res.Fine != tt.wantFine || len(res.Errors) != 0 {
+				t.Fatalf("got %q fine %d errors %v; want %q fine %d", got, res.Fine, res.Errors, tt.want, tt.wantFine)
+			}
+		})
+	}
+}

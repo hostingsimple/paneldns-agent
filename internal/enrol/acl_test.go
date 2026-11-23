@@ -256,3 +256,152 @@ func contains(s []string, v string) bool {
 	}
 	return false
 }
+
+// Review A-7: a default ACL on a directory that also holds configuration
+// or key files would give the agent read access to a key created there
+// later (rndc-confgen -a, tsig-keygen > x.key). Such directories get rx
+// only; key files in planned directories are listed for stripping.
+func TestPlanACLsNoDefaultACLBesideKeys(t *testing.T) {
+	const soa = "$TTL 300\n@ IN SOA ns1.example.net. h.example.net. 1 1 1 1 1\n"
+	tests := []struct {
+		name      string
+		files     map[string]string
+		zonesFile string
+		dirs      []string
+		noDefault []string
+		strip     []string
+	}{
+		{name: "debian /etc/bind with the rndc key", zonesFile: "/etc/bind/named.conf", files: map[string]string{
+			"/etc/bind/named.conf": `include "/etc/bind/rndc.key";
+options { directory "/var/cache/bind"; };
+zone "example.com" { type master; file "/etc/bind/db.example.com"; };`,
+			"/etc/bind/rndc.key":       `key "rndc-key" { algorithm hmac-sha256; secret "c2VjcmV0"; };`,
+			"/etc/bind/db.example.com": soa,
+		}, dirs: []string{"/etc/bind"}, noDefault: []string{"/etc/bind"}, strip: []string{"/etc/bind/rndc.key"}},
+		{name: "debian /etc/bind before any key exists", zonesFile: "/etc/bind/named.conf", files: map[string]string{
+			"/etc/bind/named.conf":     `zone "example.com" { type master; file "/etc/bind/db.example.com"; };`,
+			"/etc/bind/db.example.com": soa,
+		}, dirs: []string{"/etc/bind"}, noDefault: []string{"/etc/bind"}},
+		{name: "directory of an included config file", zonesFile: "/etc/named.conf", files: map[string]string{
+			"/etc/named.conf":                `include "/var/named/conf/zones.conf"; options { directory "/var/named"; };`,
+			"/var/named/conf/zones.conf":     `zone "example.com" { type master; file "conf/example.com.db"; };`,
+			"/var/named/conf/example.com.db": soa,
+		}, dirs: []string{"/var/named/conf"}, noDefault: []string{"/var/named/conf"}},
+		{name: "where the rndc key is written", zonesFile: "/etc/named.conf", files: map[string]string{
+			"/etc/named.conf":           `zone "example.com" { type master; file "/etc/named/example.com.db"; };`,
+			"/etc/named/example.com.db": soa,
+		}, dirs: []string{"/etc/named"}, noDefault: []string{"/etc/named"}},
+		{name: "tsig key and dnssec key beside zones", zonesFile: "/etc/named.conf", files: map[string]string{
+			"/etc/named.conf": `options { directory "/var/named"; };
+zone "a.example" { type master; file "keyed/a.example.db"; };
+zone "b.example" { type master; file "dnssec/b.example.db"; };
+zone "c.example" { type master; file "plain/c.example.db"; };`,
+			"/var/named/keyed/a.example.db":                   soa,
+			"/var/named/keyed/xfer.key":                       `key "xfer" { algorithm hmac-sha256; secret "c2VjcmV0"; };`,
+			"/var/named/dnssec/b.example.db":                  soa,
+			"/var/named/dnssec/Kb.example.+013+12345.private": "Private-key-format: v1.3\n",
+			"/var/named/dnssec/Kb.example.+013+12345.key":     "b.example. IN DNSKEY 257 3 13 dGVzdA==\n",
+			"/var/named/plain/c.example.db":                   soa,
+			"/var/named/plain/c.example.db.jnl":               "",
+		},
+			dirs:      []string{"/var/named/dnssec", "/var/named/keyed", "/var/named/plain"},
+			noDefault: []string{"/var/named/dnssec", "/var/named/keyed"},
+			strip: []string{"/var/named/dnssec/Kb.example.+013+12345.key", "/var/named/dnssec/Kb.example.+013+12345.private",
+				"/var/named/keyed/xfer.key"}},
+		{name: "zone-only directory keeps the default", zonesFile: "/etc/named.conf", files: map[string]string{
+			"/etc/named.conf":           `options { directory "/var/named"; }; zone "example.com" { type master; file "example.com.db"; };`,
+			"/var/named/example.com.db": soa,
+			"/var/named/named.ca":       "",
+		}, dirs: []string{"/var/named"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			withRoot(t, tt.files)
+			cfg := config.Defaults()
+			cfg.ZonesFile = tt.zonesFile
+			p, err := PlanACLs(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(p.Dirs, tt.dirs) || !reflect.DeepEqual(p.NoDefault, tt.noDefault) || !reflect.DeepEqual(p.Strip, tt.strip) {
+				t.Fatalf("dirs %v no-default %v strip %v; want %v %v %v", p.Dirs, p.NoDefault, p.Strip, tt.dirs, tt.noDefault, tt.strip)
+			}
+			no := map[string]bool{}
+			for _, d := range tt.noDefault {
+				no[d] = true
+			}
+			defaults := 0
+			for _, c := range p.Commands() {
+				for _, a := range c[3:] {
+					if contains(p.Strip, a) {
+						t.Fatalf("%q grants on key file %s", c[:3], a)
+					}
+				}
+				if c[1] != "-d" {
+					continue
+				}
+				for _, d := range c[4:] {
+					if no[d] {
+						t.Fatalf("default ACL on %s, which holds configuration or keys", d)
+					}
+					defaults++
+				}
+			}
+			if want := len(tt.dirs) - len(tt.noDefault); defaults != want {
+				t.Fatalf("%d directories get the default ACL, want %d", defaults, want)
+			}
+		})
+	}
+}
+
+// A symbolic link named like a key is not a key file in that directory:
+// fix-acls must not follow it to strip (or touch) whatever it points at.
+func TestPlanACLsKeyScanSkipsSymlinks(t *testing.T) {
+	withRoot(t, map[string]string{
+		"/etc/named.conf":           `options { directory "/var/named"; }; zone "example.com" { type master; file "example.com.db"; };`,
+		"/var/named/example.com.db": "",
+		"/srv/elsewhere":            "",
+	})
+	if err := os.Symlink(filepath.Join(Root, "srv", "elsewhere"), filepath.Join(Root, "var", "named", "x.key")); err != nil {
+		t.Skip("symbolic links unavailable:", err)
+	}
+	cfg := config.Defaults()
+	cfg.ZonesFile = "/etc/named.conf"
+	p, err := PlanACLs(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Strip) != 0 || len(p.NoDefault) != 0 {
+		t.Fatalf("strip %v no-default %v", p.Strip, p.NoDefault)
+	}
+}
+
+// A key file others can read is reported: an ACL can't take that away.
+func TestPlanACLsWarnsOnWorldReadableKey(t *testing.T) {
+	withRoot(t, map[string]string{
+		"/etc/bind/named.conf":     `zone "example.com" { type master; file "/etc/bind/db.example.com"; };`,
+		"/etc/bind/db.example.com": "",
+		"/etc/bind/xfer.key":       `key "xfer" { algorithm hmac-sha256; secret "c2VjcmV0"; };`,
+		"/etc/bind/rndc.key":       `key "rndc-key" { algorithm hmac-sha256; secret "c2VjcmV0"; };`,
+	})
+	statFunc = func(p string) (fs.FileInfo, error) {
+		switch strings.TrimPrefix(filepath.ToSlash(p), Root) {
+		case "/etc/bind/xfer.key":
+			return modeFI{0o644}, nil
+		case "/etc/bind/rndc.key":
+			return modeFI{0o640}, nil
+		}
+		return os.Stat(p)
+	}
+	defer func() { statFunc = os.Stat }()
+	cfg := config.Defaults()
+	cfg.ZonesFile = "/etc/bind/named.conf"
+	p, err := PlanACLs(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := strings.Join(p.Warnings, "\n")
+	if !strings.Contains(w, "key file /etc/bind/xfer.key has mode 0644") || strings.Contains(w, "rndc.key") {
+		t.Fatalf("warnings %q", p.Warnings)
+	}
+}

@@ -104,7 +104,9 @@ func TestWatchDropIns(t *testing.T) {
 }
 
 // TestPlanThenFix runs the real planner on a cPanel-like tree and checks
-// what fix-acls would do after cPanel added a zone with mode 0600.
+// what fix-acls would do after cPanel added a zone with mode 0600. The zone
+// directory also holds a DNSSEC private key, so it gets no default ACL and
+// the one an older version set is removed (review A-7).
 func TestPlanThenFix(t *testing.T) {
 	withRoot(t, map[string]string{
 		"/etc/named.conf": `include "/etc/rndc.key";
@@ -132,16 +134,24 @@ zone "new.example.com" { type master; file "/var/named/new.example.com.db"; };`,
 		case "/var/named/new.example.com.db":
 			// Created by cPanel with mode 0600: the inherited entry is masked.
 			return &ACL{UserObj: 6, GroupObj: 5, HasMask: true, Users: map[uint32]Perm{agentUID: 4}}, nil, nil
+		case "/etc/rndc.key", "/var/named/Kexample.com.+013+1.private":
+			return nil, nil, nil
 		}
 		return fine, nil, nil
 	}
+	if !reflect.DeepEqual(plan.NoDefault, []string{"/var/named"}) {
+		t.Fatalf("no-default dirs %v", plan.NoDefault)
+	}
 	cmds, res := FixCommands(plan, FixOptions{UID: agentUID, Read: read})
-	if len(cmds) != 1 || res.Fine != 3 {
+	if len(cmds) != 2 || res.Fine != 4 {
 		t.Fatalf("commands %q, fine %d", cmds, res.Fine)
 	}
 	c := cmds["/var/named/new.example.com.db"]
 	if len(c) != 1 || strings.Join(c[0][:3], " ") != "setfacl -m u:990:r--,g::---,m::r--" || c[0][3] != Root+"/var/named/new.example.com.db" {
 		t.Fatalf("command %q", c)
+	}
+	if c := cmds["/var/named"]; len(c) != 1 || strings.Join(c[0][:5], " ") != "setfacl -n -d -x u:990" {
+		t.Fatalf("zone directory command %q", c)
 	}
 	w := PlanWatch(plan)
 	if !reflect.DeepEqual(w.Watch, []string{"/etc", "/var/named"}) || !reflect.DeepEqual(w.Writable, []string{"/etc/named.conf", "/var/named"}) {

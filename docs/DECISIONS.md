@@ -218,7 +218,8 @@ key stays unreadable.
 Enrol (as root) grants, with `setfacl`, `u:paneldns-agent:r` on named.conf, on every readable
 include except files holding only `key`/`tsig-keygen` statements, on every zone file, existing
 journal and the owner file; `u:paneldns-agent:rx` plus the default ACL `u:paneldns-agent:r` on
-each zone directory (new zone files and journals inherit it); and `u:paneldns-agent:x` on parent
+each zone directory (new zone files and journals inherit it), except a zone directory that also
+holds configuration or keys (below); and `u:paneldns-agent:x` on parent
 directories that others can't search. It never adds group membership. `--no-acl` prints the commands instead of running them. Panels
 do lose these ACLs (the cPanel lab test found new zone files created 0600, so masked); the root
 watcher of D-30 restores them. `--check` opens every zone file as the agent and fails with the
@@ -236,12 +237,28 @@ warning. This closes planted links, not a race in a directory a user can write w
 text-format zone file, recursively up to 8 levels (the parser's limit), resolving relative names
 against named's `directory` as named and `named-compilezone -w` do, and absolute names inside the
 chroot. Each included file gets `u:paneldns-agent:r` and its directory `rx` plus the default
-`r` (parents `x`), like a zone file. Enrol refuses, naming the zone file, line and target:
+`r` (parents `x`), like a zone file (no default where keys live, as above). Enrol refuses, naming the zone file, line and target:
 an include outside named's `directory` and the zone directories (after resolving `..`); one of
 the key files the unit makes inaccessible or a `.private` DNSSEC key; and any included file whose
 content holds key material (a `key`/`tsig-keygen` statement, a `secret "..."`, or
 `Private-key-format:`). Public `K*.key` DNSKEY files are allowed. An include that can't be read
 even as root is a warning: that zone fails to read and is reported, but enrolment goes on.
+
+**No default ACL beside keys** (security review A-7; owner decision, 2026-11: the stricter
+option). A default ACL is inherited by every file later created in the directory, key files
+included: on Debian `/etc/bind` is both named's config directory and the zone directory, so a key
+written there by `rndc-confgen -a` or `tsig-keygen > x.key` would get `u:paneldns-agent:r`. A zone
+directory therefore gets `rx` but no default ACL when it holds named.conf or one of its includes,
+is the directory of a key file the unit makes inaccessible (`/etc`, `/etc/bind`, `/etc/named`, also in the
+chroot), holds key material now (`rndc.key`, `rndc.conf`, `*.private`, any `*.key`, by name;
+symbolic links are not counted), or can't be listed. New zone files there get their read ACL
+from the root watcher (D-30) instead of by inheritance. `fix-acls` also removes, with
+`setfacl -n` (no mask recalculation, so no other entry widens), the agent's default entry that an
+older version left on such a directory, and any agent entry on key files in planned directories
+and on the key-only includes the plan skips. The plan warns about a key file others can read: no
+ACL takes away what the mode gives everyone. Not covered: a DNSSEC `key-directory` that is not a
+zone directory is not planned at all; a key created in a zone-only directory inherits the entry
+until the watcher's next run strips it (named writes `K*.private` 0600, so that entry is masked).
 
 **Inline keys are refused** (owner decision, 2026-11-20; it replaced a warning). A `key` (or
 `tsig-keygen`) statement, at top level or directly inside a `view`, in the main named.conf or in
@@ -404,7 +421,9 @@ needed bits, never lower (a 0660 file keeps group write), and any other group-cl
 mask let through, so only the agent gains access: the 0600 case becomes
 `u:paneldns-agent:r--,g::---,m::r--`. It never touches files outside the plan, files the plan
 skips as key-only, the rndc key and config files, or `*.private` DNSSEC keys, whatever a plan
-says; inherited entries on other files in a zone directory (a new `K*.private` there) stay masked.
+says; inherited entries on other files in a zone directory (a new `K*.private` there) stay masked,
+and the next run removes the agent's entry from them and stops the directory's default ACL (D-22,
+review A-7). Removing the agent's own entries, with `setfacl -n`, is the only thing it takes away.
 It writes `setfacl` with the agent's numeric uid, so no NSS lookup is needed. It logs one line:
 `fix-acls: N fixed (paths), M already fine`, plus any errors (exit 1).
 

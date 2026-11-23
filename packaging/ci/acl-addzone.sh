@@ -2,8 +2,9 @@
 #
 # addzone NAME adds a zone to /srv/acl/named.conf and writes its zone file
 # the way cPanel does: mode 0600 and owned by another user (nobody here,
-# named on cPanel). The directory's default ACL still gives the file a
-# user:paneldns-agent:r entry, but the 0600 mode sets its mask to ---.
+# named on cPanel). In a zone directory with the default ACL the file would
+# get a user:paneldns-agent:r entry masked to ---; /srv/acl holds named.conf
+# and rndc.key, so it has no default ACL (review A-7) and the file gets none.
 
 addzone() {
 	printf 'zone "%s" { type primary; file "%s.db"; };\n' "$1" "$1" | sudo tee -a /srv/acl/named.conf >/dev/null

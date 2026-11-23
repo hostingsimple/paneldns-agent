@@ -66,8 +66,12 @@ Enrol therefore also enables `paneldns-agent-acl.path`. It watches the zone dire
 directories of named.conf, its includes and the owner file, and on any change starts
 `paneldns-agent-acl.service`, which runs `paneldns-agent fix-acls` as root. That re-grants only
 the agent's read access where it is missing (the agent's entry plus the read bit of the mask)
-on the files and directories enrol planned; it never touches key files and never lowers a mask,
-so a group's write access stays. Its log is one line per run.
+on the files and directories enrol planned; it never grants anything on key files and never
+lowers a mask, so a group's write access stays. The one thing it removes is the agent's own
+entry: from key files, and the inheritable (default) entry from a zone directory that also holds
+named's configuration or keys, such as Debian's `/etc/bind`. Such directories never get a default
+ACL, so a key file created there later is not readable by the agent; new zone files there wait
+for the watcher's next run. Its log is one line per run.
 
 Check it:
 

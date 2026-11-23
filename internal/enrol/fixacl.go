@@ -114,8 +114,13 @@ type FixResult struct {
 // It never lowers anything: the agent's entry and the mask only gain the
 // bits the agent needs, and a group-class entry that the wider mask would
 // expose is narrowed to what it had in effect before, so nobody but the
-// agent gains access. Key material is never touched, even if a plan
-// named it.
+// agent gains access. Key material is never granted anything, even if a
+// plan named it.
+//
+// The one thing it removes is the agent's own access (review A-7): its
+// default entry on the plan's NoDefault directories and any entry it has on
+// the plan's Strip files (one inherited from a default ACL), both with
+// setfacl -n so the mask is not recalculated and no other entry widens.
 func FixCommands(p *ACLPlan, o FixOptions) (cmds map[string][][]string, res *FixResult) {
 	if o.Stat == nil {
 		o.Stat = statFunc
@@ -129,9 +134,19 @@ func FixCommands(p *ACLPlan, o FixOptions) (cmds map[string][][]string, res *Fix
 	for _, s := range p.Skipped {
 		skipped[s] = true
 	}
+	strip := map[string]bool{}
+	for _, s := range p.Strip {
+		strip[s] = true
+	}
+	noDefault := map[string]bool{}
+	for _, d := range p.NoDefault {
+		noDefault[d] = true
+	}
 	type want struct {
-		need Perm
-		def  bool
+		need  Perm
+		def   bool // grant the default entry
+		undef bool // remove the agent's default entry
+		strip bool // remove the agent's entry
 	}
 	todo := map[string]want{}
 	for _, f := range p.Read {
@@ -141,7 +156,10 @@ func FixCommands(p *ACLPlan, o FixOptions) (cmds map[string][][]string, res *Fix
 		todo[d] = want{need: PermX}
 	}
 	for _, d := range p.Dirs {
-		todo[d] = want{need: PermR | PermX, def: true}
+		todo[d] = want{need: PermR | PermX, def: !noDefault[d], undef: noDefault[d]}
+	}
+	for f := range strip {
+		todo[f] = want{strip: true}
 	}
 	paths := make([]string, 0, len(todo))
 	for k := range todo {
@@ -150,7 +168,7 @@ func FixCommands(p *ACLPlan, o FixOptions) (cmds map[string][][]string, res *Fix
 	sort.Strings(paths)
 	for _, f := range paths {
 		w := todo[f]
-		if skipped[f] || IsKeyPath(f) {
+		if (skipped[f] || IsKeyPath(f)) && !w.strip {
 			continue
 		}
 		hp := rooted(f)
@@ -168,14 +186,22 @@ func FixCommands(p *ACLPlan, o FixOptions) (cmds map[string][][]string, res *Fix
 			res.Errors = append(res.Errors, fmt.Errorf("%s: reading ACL: %w", f, err))
 			continue
 		}
+		agent := "u:" + strconv.FormatUint(uint64(o.UID), 10)
 		var c [][]string
-		if spec := accessFix(fi.Mode(), access, o.UID, w.need); spec != "" {
+		if w.strip {
+			if access != nil && hasUser(access, o.UID) {
+				c = append(c, []string{"setfacl", "-n", "-x", agent, hp})
+			}
+		} else if spec := accessFix(fi.Mode(), access, o.UID, w.need); spec != "" {
 			c = append(c, []string{"setfacl", "-m", spec, hp})
 		}
 		if w.def && fi.IsDir() {
 			if spec := defaultFix(def, o.UID); spec != "" {
 				c = append(c, []string{"setfacl", "-d", "-m", spec, hp})
 			}
+		}
+		if w.undef && fi.IsDir() && def != nil && hasUser(def, o.UID) {
+			c = append(c, []string{"setfacl", "-n", "-d", "-x", agent, hp})
 		}
 		if len(c) == 0 {
 			res.Fine++
@@ -211,6 +237,11 @@ func FixACLs(p *ACLPlan, o FixOptions) *FixResult {
 		}
 	}
 	return res
+}
+
+func hasUser(a *ACL, uid uint32) bool {
+	_, ok := a.Users[uid]
+	return ok
 }
 
 // accessFix returns the setfacl -m spec that gives uid the need bits on a

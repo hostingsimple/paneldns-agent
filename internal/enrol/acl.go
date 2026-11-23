@@ -1,6 +1,7 @@
 package enrol
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -18,9 +19,17 @@ import (
 // for the agent user only, never group membership in named, bind or pdns.
 type ACLPlan struct {
 	Read     []string // files: u:paneldns-agent:r
-	Dirs     []string // zone directories: u:paneldns-agent:rx plus default u:paneldns-agent:r
+	Dirs     []string // zone directories: u:paneldns-agent:rx plus default u:paneldns-agent:r (not on NoDefault ones)
 	Traverse []string // parent directories not searchable by others: u:paneldns-agent:x
 	Skipped  []string // files deliberately left unreadable (key material)
+	// NoDefault are the zone directories (of Dirs) that also hold, or are where
+	// tools write, configuration or key files: they get rx but never a default
+	// ACL, which a key file created there later would inherit (review A-7).
+	// fix-acls removes an agent default entry an older version left on them.
+	NoDefault []string
+	// Strip are key files in planned directories, and the Skipped files:
+	// fix-acls removes any entry the agent has on them (an inherited one).
+	Strip    []string
 	Warnings []string
 }
 
@@ -37,8 +46,23 @@ func (p *ACLPlan) Commands() [][]string {
 	u := "u:" + User
 	batch([]string{"setfacl", "-m", u + ":x"}, p.Traverse)
 	batch([]string{"setfacl", "-m", u + ":rx"}, p.Dirs)
-	batch([]string{"setfacl", "-d", "-m", u + ":r"}, p.Dirs)
+	batch([]string{"setfacl", "-d", "-m", u + ":r"}, p.defaultDirs())
 	batch([]string{"setfacl", "-m", u + ":r"}, p.Read)
+	return out
+}
+
+// defaultDirs are the zone directories that get the default ACL.
+func (p *ACLPlan) defaultDirs() []string {
+	no := map[string]bool{}
+	for _, d := range p.NoDefault {
+		no[d] = true
+	}
+	var out []string
+	for _, d := range p.Dirs {
+		if !no[d] {
+			out = append(out, d)
+		}
+	}
 	return out
 }
 
@@ -51,6 +75,9 @@ func PlanACLs(cfg config.Config) (*ACLPlan, error) {
 	p := &ACLPlan{}
 	read := map[string]bool{}
 	dirs := map[string]bool{}
+	// Directories that hold named's configuration (named.conf and its
+	// includes): key files are kept, and created, next to it.
+	confDirs := map[string]bool{}
 	if cfg.ZoneSource == config.SourceBIND {
 		l := &namedconf.Loader{ReadFile: readRooted, Glob: globRooted, Chroot: cfg.Chroot}
 		conf, err := namedconf.Read(l, cfg.ZonesFile, cfg.View)
@@ -61,7 +88,9 @@ func PlanACLs(cfg config.Config) (*ACLPlan, error) {
 			return nil, err
 		}
 		files := []string{cfg.ZonesFile}
+		confDirs[path.Dir(cfg.ZonesFile)] = true
 		for _, inc := range conf.Includes {
+			confDirs[path.Dir(inc.Path)] = true
 			if inc.Readable {
 				files = append(files, inc.Path)
 			}
@@ -127,7 +156,76 @@ func PlanACLs(cfg config.Config) (*ACLPlan, error) {
 	p.Read = sortedKeys(read)
 	p.Dirs = sortedKeys(dirs)
 	p.Traverse = sortedKeys(traverse)
+	p.planKeyDirs(cfg.Chroot, confDirs, read)
 	return p, nil
+}
+
+// planKeyDirs fills NoDefault and Strip (review A-7). A default ACL on a
+// directory is inherited by every file created in it, key files included:
+// `rndc-confgen -a` or `tsig-keygen > x.key` in Debian's /etc/bind, which
+// is also its zone directory, would leave a key the agent can read. So a
+// zone directory gets no default ACL when it holds named's configuration,
+// is where the rndc key lives, or holds key material now; new zone files
+// there get their ACL from the root watcher (fix-acls) instead.
+func (p *ACLPlan) planKeyDirs(chroot string, confDirs, read map[string]bool) {
+	keyDirs := map[string]bool{}
+	for k := range keyPaths {
+		keyDirs[path.Dir(k)] = true
+		if chroot != "" {
+			keyDirs[path.Join(chroot, path.Dir(k))] = true
+		}
+	}
+	strip := map[string]bool{}
+	for _, s := range p.Skipped {
+		strip[s] = true
+	}
+	var noDefault []string
+	for _, d := range p.Dirs {
+		keys, err := keyFilesIn(d)
+		if errors.Is(err, fs.ErrNotExist) {
+			err = nil // nothing in it to inherit anything
+		} else if err != nil {
+			// Unlistable even as root: assume the worst.
+			p.Warnings = append(p.Warnings, fmt.Sprintf("no default ACL on %s: listing it: %v", d, err))
+		}
+		for _, k := range keys {
+			if !read[k] {
+				strip[k] = true
+			}
+		}
+		if confDirs[d] || keyDirs[d] || len(keys) > 0 || err != nil {
+			noDefault = append(noDefault, d)
+		}
+	}
+	p.NoDefault = noDefault
+	if len(strip) > 0 {
+		p.Strip = sortedKeys(strip)
+	}
+	// No ACL can take away what the mode gives everyone.
+	for _, k := range p.Strip {
+		if fi, err := statFunc(rooted(k)); err == nil && fi.Mode().Perm()&0o004 != 0 {
+			p.Warnings = append(p.Warnings, fmt.Sprintf("key file %s has mode %04o: every local user can read it; chmod o-r it", k, fi.Mode().Perm()))
+		}
+	}
+}
+
+// keyFilesIn lists the regular files in directory d (host path) that are
+// key material by name: the rndc key and config, DNSSEC private keys, and
+// any *.key file (TSIG keys, DNSSEC key pairs). Symbolic links are left
+// out: fix-acls must not follow one.
+func keyFilesIn(d string) ([]string, error) {
+	entries, err := os.ReadDir(rooted(d))
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, e := range entries {
+		f := path.Join(d, e.Name())
+		if e.Type().IsRegular() && (IsKeyPath(f) || strings.HasSuffix(e.Name(), ".key")) {
+			out = append(out, f)
+		}
+	}
+	return out, nil
 }
 
 // addParents adds d and its parents that others can't search.
