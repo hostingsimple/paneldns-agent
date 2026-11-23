@@ -180,7 +180,7 @@ func (b *BIND) fingerprint(conf *namedconf.Conf, z namedconf.Zone) string {
 	if !ok || ent.stamp != zs {
 		ent = incEntry{stamp: zs}
 		if z.Format == "text" {
-			if data, err := b.readFile(z.File); err == nil {
+			if data, err := b.readZoneFile(z.File); err == nil {
 				for _, m := range includeLine.FindAllSubmatch(data, -1) {
 					p := strings.Trim(string(m[1]), `"`)
 					if !path.IsAbs(p) {
