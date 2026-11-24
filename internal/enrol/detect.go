@@ -9,12 +9,12 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
 
 	"github.com/hostingsimple/paneldns-agent/internal/config"
+	"github.com/hostingsimple/paneldns-agent/internal/syspath"
 )
 
 // Root is prefixed to every path detection looks at (tests).
@@ -189,7 +189,13 @@ func detectChroot() (chroot, conf string) {
 
 // namedVersionOutput runs `named -V`, whose "named configuration:" line is the compiled-in
 // default config path (tests replace it).
-var namedVersionOutput = func() ([]byte, error) { return exec.Command("named", "-V").Output() }
+var namedVersionOutput = func() ([]byte, error) {
+	cmd, err := syspath.Command("named", "-V")
+	if err != nil {
+		return nil, err
+	}
+	return cmd.Output()
+}
 
 // runningNamedConf returns the named.conf the running named reads: its -c argument, or else
 // the compiled-in default from `named -V`. Empty when no named process is found.

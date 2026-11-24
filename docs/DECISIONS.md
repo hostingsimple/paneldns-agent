@@ -504,3 +504,18 @@ waits for the next change in a watched directory (or a manual `fix-acls`); the a
 zone as unreadable meanwhile. A zone in a brand-new directory isn't watched until `fix-acls` runs
 by hand. Watching named.conf's directory (`/etc`) means unrelated writes there start runs; each
 re-reads named.conf and the zone files for `$INCLUDE`.
+
+## D-31 System programs by absolute path (7.9)
+
+**Finding** (security review A-13). Enrol and `fix-acls` run as root and started `named -V`,
+`setfacl` and `systemctl` by `$PATH` lookup, so whoever set the caller's `PATH` (or could write a
+directory early in it) chose the binary root ran. The agent looked up `named-compilezone` the same
+way.
+
+**Decision.** Every program the agent starts (`named`, `named-compilezone`, `setfacl`,
+`systemctl`) is found in a fixed list of system directories, in this order: `/usr/sbin`,
+`/usr/bin`, `/sbin`, `/bin`, `/usr/local/sbin`, `/usr/local/bin` (`internal/syspath`). `$PATH` is
+never read. A candidate must be a regular executable file owned by root and not writable by group
+or others, in a directory with the same property; one that fails is skipped and named in the "not
+found" error. `/usr/local` comes last because some BIND builds install there. The agent's own
+re-execution as the agent user (`--check` from enrol) uses `os.Executable()`, already absolute.

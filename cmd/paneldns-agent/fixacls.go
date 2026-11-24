@@ -7,7 +7,6 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
 	"runtime"
@@ -18,6 +17,7 @@ import (
 	"github.com/hostingsimple/paneldns-agent/internal/config"
 	"github.com/hostingsimple/paneldns-agent/internal/enrol"
 	"github.com/hostingsimple/paneldns-agent/internal/state"
+	"github.com/hostingsimple/paneldns-agent/internal/syspath"
 )
 
 // Seams for tests.
@@ -31,8 +31,14 @@ var (
 		n, err := strconv.ParseUint(u.Uid, 10, 32)
 		return uint32(n), err
 	}
+	// runSystemctl runs systemctl from the system directories, never
+	// through $PATH (review A-13).
 	runSystemctl = func(args ...string) ([]byte, error) {
-		return exec.Command("systemctl", args...).CombinedOutput()
+		cmd, err := syspath.Command("systemctl", args...)
+		if err != nil {
+			return nil, err
+		}
+		return cmd.CombinedOutput()
 	}
 	// unitsSupported: drop-ins are only written where systemd runs.
 	unitsSupported   = runtime.GOOS == "linux"

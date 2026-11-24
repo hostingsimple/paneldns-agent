@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
+
+	"github.com/hostingsimple/paneldns-agent/internal/syspath"
 )
 
 // The race between planning and setfacl (security review A-3). The plan
@@ -162,7 +163,10 @@ func runSetfaclFiles(argv []string, files map[string]*os.File) error {
 			args[i+1] = "/proc/self/fd/" + strconv.Itoa(2+len(extra))
 		}
 	}
-	cmd := exec.Command(args[0], args[1:]...)
+	cmd, err := syspath.Command(args[0], args[1:]...)
+	if err != nil {
+		return fmt.Errorf("setfacl not found in %s: install the acl package (apt install acl / dnf install acl): %w", strings.Join(syspath.Dirs, ", "), err)
+	}
 	cmd.ExtraFiles = extra
 	out, err := cmd.CombinedOutput()
 	if err != nil {

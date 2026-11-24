@@ -27,6 +27,12 @@ Security review 2026-11, the remaining agent findings.
   in a denied range, and `ProtectHome=read-only` only when zone data lives under `/home`
   (HestiaCP), also through a symbolic link. The ACL watcher's home rule now follows links too.
 
+- `named`, `named-compilezone`, `setfacl` and `systemctl` are run by absolute path, found in
+  `/usr/sbin`, `/usr/bin`, `/sbin`, `/bin`, `/usr/local/sbin` or `/usr/local/bin` (in that order)
+  and only when root owns the file and its directory and nobody else can write them; `$PATH` is
+  never used. Enrol and `fix-acls` run as root, so a `PATH` set by the caller, or a writable
+  directory early in it, chose the binary root ran (review A-13).
+
 ### Added
 
 - `paneldns-agent update-units` (root) rewrites this server's unit drop-ins (the agent's and the

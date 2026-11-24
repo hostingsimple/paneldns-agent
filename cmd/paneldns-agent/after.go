@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"runtime"
 	"strings"
 
@@ -118,7 +117,7 @@ func afterEnrol(o afterOptions) func(context.Context, config.Config, enrol.Detec
 }
 
 func systemctl(out io.Writer, args ...string) error {
-	b, err := exec.Command("systemctl", args...).CombinedOutput()
+	b, err := runSystemctl(args...)
 	if err != nil {
 		out.Write(b)
 		return fmt.Errorf("systemctl %s: %w", strings.Join(args, " "), err)
