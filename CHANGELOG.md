@@ -41,6 +41,18 @@ Security review 2026-11, the remaining agent findings.
   run by hand does it too. `--check` warns when the drop-ins are out of date (a resolver that
   moved). Removing the package now also deletes the agent's own drop-ins.
 
+### Fixed
+
+- A key rotation whose answer was lost (a timeout, a proxy error, a crash or restart right
+  after `/rotate`) no longer locks the agent out a day later. PanelDNS may already have switched
+  to the new key, accepting the old one for 24 hours only, but the agent threw the new key away
+  (also at every start), so the server had to be enrolled again (review A-15). The agent now
+  drops the new key only when PanelDNS refuses the rotation outright; otherwise it keeps both,
+  goes on with the old one, and before its next requests asks again and, if needed, checks
+  whether PanelDNS accepts the new key, then keeps whichever key PanelDNS holds. A switch
+  interrupted by a crash is finished at the next start. Works with the released PanelDNS; no
+  server change.
+
 ## [0.1.4] - 2026-11-24
 
 Security review 2026-11 (agent findings A-1 to A-10; A-3 for planted links only).

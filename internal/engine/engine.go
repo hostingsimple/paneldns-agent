@@ -57,6 +57,10 @@ type Config struct {
 	Host      Host
 	// NeedEpoch makes the first cycle call POST /epoch (state was lost).
 	NeedEpoch bool
+	// KeyPending: an earlier key rotation's outcome is unknown (its answer
+	// was lost); Rotate is called at the start of every cycle until it
+	// resolves it.
+	KeyPending bool
 	// CacheBytes bounds zone text kept between a scan and its push;
 	// zones beyond it are read again when sent.
 	CacheBytes int
@@ -71,7 +75,10 @@ type Engine struct {
 	log    *slog.Logger
 
 	// Now and Rotate may be set by the caller. Rotate is called when a
-	// heartbeat answer asks for key rotation.
+	// heartbeat answer asks for key rotation, and at the start of each cycle
+	// while a rotation is pending (Config.KeyPending, or Rotate returned
+	// ErrRotationPending): before any other request, because the old key
+	// may have stopped working.
 	Now    func() time.Time
 	Rotate func(ctx context.Context) error
 
@@ -88,6 +95,7 @@ type Engine struct {
 	fullScanDone bool
 	needEpoch    bool
 	rotate       bool
+	keyPending   bool
 
 	backoff     backoff.Backoff
 	nextAttempt time.Time
@@ -116,7 +124,7 @@ func New(cfg Config, src source.Source, api API, owners Owners, st *state.State,
 	return &Engine{
 		cfg: cfg, src: src, api: api, owners: owners, log: log, st: st,
 		refs: map[string]source.ZoneRef{}, cache: map[string]*prepared{},
-		inventoryDue: true, needEpoch: cfg.NeedEpoch,
+		inventoryDue: true, needEpoch: cfg.NeedEpoch, keyPending: cfg.KeyPending,
 		Now: time.Now,
 	}
 }
@@ -402,7 +410,26 @@ func (e *Engine) cycle(ctx context.Context) error {
 	return err
 }
 
+// ErrRotationPending is returned by Rotate when PanelDNS may or may not have
+// registered the new key (the answer was lost): both keys are kept and
+// Rotate is called again at the start of the next cycle.
+var ErrRotationPending = errors.New("key rotation pending")
+
 func (e *Engine) send(ctx context.Context) error {
+	if e.keyPending && e.Rotate != nil {
+		err := e.Rotate(ctx)
+		switch {
+		case errors.Is(err, ErrRotationPending):
+			e.log.Warn("an earlier key rotation is still unresolved; both keys are kept", "err", err)
+		default:
+			// Settled, one way or the other; a new rotation waits for
+			// PanelDNS to ask again.
+			if err != nil {
+				e.log.Error("key rotation", "err", err)
+			}
+			e.keyPending, e.rotate = false, false
+		}
+	}
 	if e.needEpoch {
 		if _, err := e.api.Epoch(ctx); err != nil {
 			return err
@@ -431,8 +458,11 @@ func (e *Engine) send(ctx context.Context) error {
 	if err := e.heartbeat(ctx, false); err != nil {
 		return err
 	}
-	if e.rotate && e.Rotate != nil {
-		if err := e.Rotate(ctx); err != nil {
+	if e.rotate && !e.keyPending && e.Rotate != nil {
+		if err := e.Rotate(ctx); errors.Is(err, ErrRotationPending) {
+			e.log.Warn("key rotation: no answer from PanelDNS; both keys are kept until it shows which one it has", "err", err)
+			e.keyPending = true
+		} else if err != nil {
 			e.log.Error("key rotation failed; the old key keeps working", "err", err)
 		} else {
 			e.rotate = false

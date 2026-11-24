@@ -129,6 +129,14 @@ Body `{"public_key": "<base64 32 bytes>"}`, signed with the **old** key. Answer
 `X-PanelDNS-Key: <source_id>.<new key_id>`. The agent rotates only when a heartbeat answer has
 `"rotate_key": true`.
 
+When the answer is lost (no answer, 5xx, a 2xx without a usable key id), the agent keeps both keys
+and, before its next requests, sends the same `/rotate` again signed with the old key, and if
+that is refused (409, 400 or 401) a `/rotate` signed with the new key under the old key id plus
+one. Any answer to that one other than 401 (and the pre-signature 403, 413, 429) tells it the
+server holds the new key. This relies on the server's current behaviour (numeric key ids that a
+rotation increments, the signature checked before the request is looked at), not on anything
+this section requires; see DECISIONS.md D-19.
+
 ### 4.4 `POST /api/agent/v1/heartbeat`
 
 Sent once per scan interval, after the cycle's other requests, and by `--check`.

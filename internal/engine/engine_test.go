@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -622,5 +623,38 @@ func TestReadErrorsKeepZone(t *testing.T) {
 	hb := api.heartbeats[len(api.heartbeats)-1]
 	if len(hb.Errors) != 1 || hb.Errors[0].Zone != "example.com" || hb.Errors[0].Code != "read_failed" {
 		t.Fatalf("heartbeat errors %+v", hb.Errors)
+	}
+}
+
+// A rotation whose answer was lost (review A-15) is settled at the start of
+// the next cycles, before any other request, until Rotate stops reporting
+// it pending; it never starts a fresh rotation by itself.
+func TestPendingRotation(t *testing.T) {
+	e, _, api, c := newFixture(t)
+	var calls []int // heartbeats seen when Rotate ran
+	results := []error{ErrRotationPending, ErrRotationPending, nil}
+	e.Rotate = func(ctx context.Context) error {
+		calls = append(calls, len(api.heartbeats))
+		err := results[0]
+		results = results[1:]
+		return err
+	}
+	api.hbResp = &protocol.HeartbeatResponse{RotateKey: true}
+	step(t, e, c) // asked: Rotate after the heartbeat says pending
+	step(t, e, c) // pending: Rotate first thing, still pending
+	step(t, e, c) // pending: settled
+	step(t, e, c) // nothing more
+	if !reflect.DeepEqual(calls, []int{1, 1, 2}) {
+		t.Fatalf("Rotate ran with heartbeats seen %v; want after the first, then before the 2nd and 3rd", calls)
+	}
+
+	e2, _, _, c2 := newFixture(t)
+	e2.cfg.KeyPending, e2.keyPending = true, true
+	n := 0
+	e2.Rotate = func(context.Context) error { n++; return errors.New("dropped") }
+	step(t, e2, c2)
+	step(t, e2, c2)
+	if n != 1 {
+		t.Fatalf("Rotate ran %d times after a settled (failed) resolution", n)
 	}
 }

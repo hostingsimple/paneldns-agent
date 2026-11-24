@@ -181,9 +181,33 @@ to do. The Plesk chroot detection is unverified until tried on a Plesk server.
 ## D-19 Key rotation (8.1)
 
 On `rotate_key: true` the agent writes the new key to `agent.key.next`, calls `/rotate` signed
-with the old key, and only then renames the new key over `agent.key` and stores the new key id.
-If the agent dies in between, the old key still works (spec: until the new one is used once, or
-24 hours) and the server asks again; a stale `agent.key.next` is removed at start.
+with the old key, and on the answer switches: the new key id goes into `identity.json` as
+`next_key_id`, the new key is renamed over `agent.key`, then the key id becomes the current one.
+A start that finds `next_key_id` finishes that switch.
+
+**A lost answer** (security review A-15). Up to 0.1.4 a failed `/rotate` removed the new key, and so
+did every start. But PanelDNS may have registered the key before the answer was lost (a timeout, a
+proxy's 502, a crash or restart in between): it then accepts the old key for 24 hours only and
+never asks again (`rotate_requested_at` is cleared), so the server had to be enrolled again. Now
+the agent drops the new key only on a 4xx refusal, which PanelDNS sends without registering
+anything. Otherwise it keeps both keys, goes on signing with the old one, and at the start of
+each cycle, before any other request:
+
+1. sends `/rotate` again with the same new key, signed with the old key; if PanelDNS still wants
+   a rotation it registers the key now and answers with its id;
+2. on 409 `rotation_not_requested`, 400 (the key is already the current one) or 401 (the old key
+   stopped working), signs a `/rotate` with the new key under the key id PanelDNS gives a rotated
+   key (the old id plus one). PanelDNS checks the signature before anything about the request
+   (order S-05 of its protocol notes), so any answer it gives only after that check (2xx, 400,
+   409, 426) shows it holds the new key: the agent switches to it. 401 shows it never registered
+   it: the agent drops it and keeps the old key.
+
+Other answers (403, 429, 5xx, no answer) leave both keys in place for the next cycle. This needs no
+PanelDNS change. It does lean on two things PanelDNS does but `PROTOCOL.md` leaves open: key ids
+are decimal and a rotation adds one, and the order of its checks. If key ids weren't numbers the
+agent can't check, drops the new key and logs that the server may need enrolling again. A
+`/rotate` that answered a repeated public key with its existing key id would make step 2
+unnecessary.
 
 ## D-20 Owner files (7.3, 18.4 item 4)
 

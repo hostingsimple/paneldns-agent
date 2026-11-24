@@ -243,7 +243,9 @@ func (c *Client) Rotate(ctx context.Context, newPub ed25519.PublicKey) (*RotateR
 		return nil, err
 	}
 	if out.KeyID == "" || strings.Contains(string(out.KeyID), ".") {
-		return nil, fmt.Errorf("rotate: the server sent an unusable key id")
+		// A 2xx: PanelDNS checked the signature and answered; the agent's
+		// rotation recovery needs to tell that from a lost answer.
+		return nil, &APIError{Path: PathRotate, Status: http.StatusOK, Message: "the server sent an unusable key id"}
 	}
 	return out, nil
 }
