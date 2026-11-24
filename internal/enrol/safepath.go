@@ -34,10 +34,15 @@ const maxLinks = 40
 // before enrol or fix-acls, both root, set the ACL. The target must not be
 // key material.
 //
-// This closes planted links. It does not close a race in a directory a user
-// can write (they can still replace a component between this check and
-// setfacl); zone directories are owned by root or named.
-func trustedPath(p string) (string, error) {
+// This closes planted links. The race in a directory a user can write (a
+// component replaced between this check and setfacl) is closed when the ACL
+// is set: openPlanned walks the result again without following any link and
+// hands setfacl the descriptor (fdwalk.go).
+func trustedPath(p string) (string, error) { return resolveTrusted(p, false) }
+
+// resolveTrusted is trustedPath; allowKey lets the result be key material
+// (fix-acls opening a key file only to remove the agent's entry from it).
+func resolveTrusted(p string, allowKey bool) (string, error) {
 	p = path.Clean(p)
 	links := 0
 	resolved := "/"
@@ -85,7 +90,7 @@ func trustedPath(p string) (string, error) {
 			resolved = "/"
 		}
 	}
-	if IsKeyPath(resolved) {
+	if !allowKey && IsKeyPath(resolved) {
 		return "", fmt.Errorf("%s resolves to %s, which is key material", p, resolved)
 	}
 	return resolved, nil

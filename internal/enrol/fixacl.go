@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path"
 	"sort"
 	"strconv"
@@ -98,7 +99,12 @@ type FixOptions struct {
 	UID  uint32                            // paneldns-agent's uid
 	Stat func(string) (fs.FileInfo, error) // nil: statFunc
 	Read ACLReader                         // nil: ReadACL (xattrs; Linux only)
-	Run  func(argv []string) error         // nil: setfacl via exec
+	Run  func(argv []string) error         // nil: setfacl via exec, on the opened descriptors
+
+	// open opens each planned path before it is read or changed. nil: as it
+	// is for FixCommands (a dry run), and without following any symbolic
+	// link for FixACLs (ACLPlan.openPlanned, review A-3).
+	open opener
 }
 
 // FixResult counts what FixACLs did.
@@ -122,14 +128,28 @@ type FixResult struct {
 // the plan's Strip files (one inherited from a default ACL), both with
 // setfacl -n so the mask is not recalculated and no other entry widens.
 func FixCommands(p *ACLPlan, o FixOptions) (cmds map[string][][]string, res *FixResult) {
+	if o.open == nil {
+		o.open = openPlain
+	}
+	cmds, targets, res := fixCommands(p, o)
+	for _, t := range targets {
+		t.close()
+	}
+	return cmds, res
+}
+
+// fixCommands is FixCommands; it also returns the opened targets, which the
+// commands name and the caller closes.
+func fixCommands(p *ACLPlan, o FixOptions) (map[string][][]string, map[string]*target, *FixResult) {
 	if o.Stat == nil {
 		o.Stat = statFunc
 	}
 	if o.Read == nil {
 		o.Read = ReadACL
 	}
-	res = &FixResult{}
-	cmds = map[string][][]string{}
+	res := &FixResult{}
+	cmds := map[string][][]string{}
+	targets := map[string]*target{}
 	skipped := map[string]bool{}
 	for _, s := range p.Skipped {
 		skipped[s] = true
@@ -144,6 +164,7 @@ func FixCommands(p *ACLPlan, o FixOptions) (cmds map[string][][]string, res *Fix
 	}
 	type want struct {
 		need  Perm
+		dir   bool // the path must be a directory
 		def   bool // grant the default entry
 		undef bool // remove the agent's default entry
 		strip bool // remove the agent's entry
@@ -153,10 +174,10 @@ func FixCommands(p *ACLPlan, o FixOptions) (cmds map[string][][]string, res *Fix
 		todo[f] = want{need: PermR}
 	}
 	for _, d := range p.Traverse {
-		todo[d] = want{need: PermX}
+		todo[d] = want{need: PermX, dir: true}
 	}
 	for _, d := range p.Dirs {
-		todo[d] = want{need: PermR | PermX, def: !noDefault[d], undef: noDefault[d]}
+		todo[d] = want{need: PermR | PermX, dir: true, def: !noDefault[d], undef: noDefault[d]}
 	}
 	for f := range strip {
 		todo[f] = want{strip: true}
@@ -171,8 +192,7 @@ func FixCommands(p *ACLPlan, o FixOptions) (cmds map[string][][]string, res *Fix
 		if (skipped[f] || IsKeyPath(f)) && !w.strip {
 			continue
 		}
-		hp := rooted(f)
-		fi, err := o.Stat(hp)
+		t, err := o.open(f, w.dir, w.strip)
 		if errors.Is(err, fs.ErrNotExist) {
 			res.Missing++
 			continue
@@ -181,8 +201,21 @@ func FixCommands(p *ACLPlan, o FixOptions) (cmds map[string][][]string, res *Fix
 			res.Errors = append(res.Errors, err)
 			continue
 		}
+		hp := t.Path
+		fi, err := o.Stat(hp)
+		if errors.Is(err, fs.ErrNotExist) {
+			t.close()
+			res.Missing++
+			continue
+		}
+		if err != nil {
+			t.close()
+			res.Errors = append(res.Errors, err)
+			continue
+		}
 		access, def, err := o.Read(hp)
 		if err != nil {
+			t.close()
 			res.Errors = append(res.Errors, fmt.Errorf("%s: reading ACL: %w", f, err))
 			continue
 		}
@@ -204,20 +237,39 @@ func FixCommands(p *ACLPlan, o FixOptions) (cmds map[string][][]string, res *Fix
 			c = append(c, []string{"setfacl", "-n", "-d", "-x", agent, hp})
 		}
 		if len(c) == 0 {
+			t.close()
 			res.Fine++
 			continue
 		}
 		cmds[f] = c
+		targets[f] = t
 	}
-	return cmds, res
+	return cmds, targets, res
 }
 
-// FixACLs runs FixCommands' setfacl calls.
+// FixACLs runs FixCommands' setfacl calls. Each path is opened without
+// following symbolic links and must still be the object the plan saw; its
+// ACL is read through, and setfacl acts on, that descriptor.
 func FixACLs(p *ACLPlan, o FixOptions) *FixResult {
-	if o.Run == nil {
-		o.Run = runSetfacl
+	if o.open == nil {
+		o.open = p.openPlanned
 	}
-	cmds, res := FixCommands(p, o)
+	cmds, targets, res := fixCommands(p, o)
+	defer func() {
+		for _, t := range targets {
+			t.close()
+		}
+	}()
+	run := o.Run
+	if run == nil {
+		files := map[string]*os.File{}
+		for _, t := range targets {
+			if t.File != nil {
+				files[t.Path] = t.File
+			}
+		}
+		run = func(argv []string) error { return runSetfaclFiles(argv, files) }
+	}
 	keys := make([]string, 0, len(cmds))
 	for k := range cmds {
 		keys = append(keys, k)
@@ -226,8 +278,8 @@ func FixACLs(p *ACLPlan, o FixOptions) *FixResult {
 	for _, f := range keys {
 		ok := true
 		for _, c := range cmds[f] {
-			if err := o.Run(c); err != nil {
-				res.Errors = append(res.Errors, err)
+			if err := run(c); err != nil {
+				res.Errors = append(res.Errors, fmt.Errorf("%s: %w", f, err))
 				ok = false
 				break
 			}

@@ -6,6 +6,20 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+Security review 2026-11, the remaining agent findings.
+
+### Security
+
+- Enrol and `fix-acls` (both root) no longer hand `setfacl` a path that can change under them.
+  The plan notes the object each path reaches, walking from `/` without following any symbolic
+  link; when the ACL is set, the path is walked again the same way and must reach that same
+  object, and `setfacl` gets the open descriptor (`/proc/self/fd/N`), not the path. A user who
+  can write a directory on the path (a HestiaCP home directory, a `named`-writable zone directory)
+  could swap a component for a link between the plan and `setfacl` and so have root grant the
+  agent read access to any file (review A-3, residual of 0.1.4's fix). A path that changed stops
+  enrol and is reported by `fix-acls`; a file with several hard links in such a directory is
+  refused too.
+
 ## [0.1.4] - 2026-11-24
 
 Security review 2026-11 (agent findings A-1 to A-10; A-3 for planted links only).

@@ -31,25 +31,45 @@ type ACLPlan struct {
 	// fix-acls removes any entry the agent has on them (an inherited one).
 	Strip    []string
 	Warnings []string
+
+	// ids is what each Read, Dirs and Traverse path reached when the plan
+	// was made (Linux): setfacl is only run on that same object (fdwalk.go).
+	ids map[string]fileID
+}
+
+// aclSet is one setfacl invocation for a list of paths of one kind.
+type aclSet struct {
+	prefix []string
+	paths  []string
+	dir    bool
+}
+
+func (p *ACLPlan) sets() []aclSet {
+	u := "u:" + User
+	return []aclSet{
+		{[]string{"setfacl", "-m", u + ":x"}, p.Traverse, true},
+		{[]string{"setfacl", "-m", u + ":rx"}, p.Dirs, true},
+		{[]string{"setfacl", "-d", "-m", u + ":r"}, p.defaultDirs(), true},
+		{[]string{"setfacl", "-m", u + ":r"}, p.Read, false},
+	}
 }
 
 // Commands returns the setfacl command lines for the plan.
 func (p *ACLPlan) Commands() [][]string {
 	var out [][]string
-	batch := func(prefix []string, paths []string) {
-		for len(paths) > 0 {
-			n := min(len(paths), 200)
-			out = append(out, append(append([]string{}, prefix...), paths[:n]...))
+	for _, s := range p.sets() {
+		for paths := s.paths; len(paths) > 0; {
+			n := min(len(paths), aclBatch)
+			out = append(out, append(append([]string{}, s.prefix...), paths[:n]...))
 			paths = paths[n:]
 		}
 	}
-	u := "u:" + User
-	batch([]string{"setfacl", "-m", u + ":x"}, p.Traverse)
-	batch([]string{"setfacl", "-m", u + ":rx"}, p.Dirs)
-	batch([]string{"setfacl", "-d", "-m", u + ":r"}, p.defaultDirs())
-	batch([]string{"setfacl", "-m", u + ":r"}, p.Read)
 	return out
 }
+
+// aclBatch is the most paths one setfacl call gets (and so the most
+// descriptors ApplyACLs holds open at once).
+const aclBatch = 200
 
 // defaultDirs are the zone directories that get the default ACL.
 func (p *ACLPlan) defaultDirs() []string {
@@ -139,9 +159,12 @@ func PlanACLs(cfg config.Config) (*ACLPlan, error) {
 		}
 	}
 	// setfacl follows symbolic links: never grant through one a user
-	// could have planted.
+	// could have planted, and note what each path reaches so a component
+	// swapped later is refused when the ACL is set.
 	p.Warnings = append(p.Warnings, dropUntrusted(read)...)
+	p.Warnings = append(p.Warnings, p.recordIDs(read)...)
 	p.Warnings = append(p.Warnings, dropUntrusted(dirs)...)
+	p.Warnings = append(p.Warnings, p.recordIDs(dirs)...)
 	traverse := map[string]bool{}
 	for f := range read {
 		addParents(path.Dir(f), traverse)
@@ -153,6 +176,7 @@ func PlanACLs(cfg config.Config) (*ACLPlan, error) {
 		delete(traverse, d)
 	}
 	p.Warnings = append(p.Warnings, dropUntrusted(traverse)...)
+	p.Warnings = append(p.Warnings, p.recordIDs(traverse)...)
 	p.Read = sortedKeys(read)
 	p.Dirs = sortedKeys(dirs)
 	p.Traverse = sortedKeys(traverse)
@@ -280,33 +304,52 @@ func classify(f string) (hasKey, hasOther bool, err error) {
 	return hasKey, hasOther, nil
 }
 
-// ApplyACLs runs the plan's setfacl commands.
+// ApplyACLs runs the plan's setfacl commands. With run nil, each path is
+// opened without following symbolic links and must still be what the plan
+// saw (openPlanned); setfacl gets the descriptors, not the paths. A path
+// that changed stops enrolment: someone is racing it.
 func ApplyACLs(p *ACLPlan, run func(argv []string) error) error {
-	if run == nil {
-		run = runSetfacl
+	if run != nil {
+		for _, c := range p.Commands() {
+			if err := run(c); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
-	for _, c := range p.Commands() {
-		if err := run(c); err != nil {
-			return err
+	for _, s := range p.sets() {
+		for paths := s.paths; len(paths) > 0; {
+			n := min(len(paths), aclBatch)
+			if err := p.applyBatch(s, paths[:n]); err != nil {
+				return err
+			}
+			paths = paths[n:]
 		}
 	}
 	return nil
 }
 
-// runSetfacl runs one setfacl command line.
-func runSetfacl(argv []string) error {
-	out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput()
-	if err != nil {
-		if errorsIsNotFound(err) {
-			return fmt.Errorf("setfacl not found: install the acl package (apt install acl / dnf install acl)")
+func (p *ACLPlan) applyBatch(s aclSet, paths []string) error {
+	argv := append([]string{}, s.prefix...)
+	files := map[string]*os.File{}
+	var opened []*target
+	defer func() {
+		for _, t := range opened {
+			t.close()
 		}
-		cmd := strings.Join(argv, " ")
-		if len(argv) > 5 {
-			cmd = strings.Join(argv[:3], " ") + " ..."
+	}()
+	for _, f := range paths {
+		t, err := p.openPlanned(f, s.dir, false)
+		if err != nil {
+			return fmt.Errorf("setting ACLs: %w", err)
 		}
-		return fmt.Errorf("%s: %v: %s", cmd, err, strings.TrimSpace(string(out)))
+		opened = append(opened, t)
+		if t.File != nil {
+			files[t.Path] = t.File
+		}
+		argv = append(argv, t.Path)
 	}
-	return nil
+	return runSetfaclFiles(argv, files)
 }
 
 func errorsIsNotFound(err error) bool {

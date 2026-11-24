@@ -230,8 +230,22 @@ links root owns and sit in directories only root can change (owned by root and n
 group or others, or sticky), and whose target is not key material; Plesk's `/etc/named.conf`
 link into its chroot qualifies. A link a user or `named` could have made (a home directory
 component on HestiaCP, a link in a `named`-writable zone directory) drops that path with a
-warning. This closes planted links, not a race in a directory a user can write while enrol or
-`fix-acls` runs.
+warning.
+
+**The race between the plan and setfacl** (security review A-3, residual). A user who can write a
+directory on a planned path could still swap a component for a link after the plan and before
+`setfacl` follows it. So the plan also notes, for every path it keeps, the object the path reaches
+(device, inode, owner, type), found by walking from `/` with `openat(O_PATH|O_NOFOLLOW)` one
+component at a time (`O_DIRECTORY` for all but the last), which follows no link at all. When enrol
+or `fix-acls` sets the ACL, it resolves the path again, walks it the same way, and refuses the path
+unless it reaches that same object with the expected type (a directory or a regular file, never a
+link); a file with more than one hard link in a directory a user other than root can change is
+refused too. `setfacl` then gets the open descriptor as `/proc/self/fd/N` (passed to the child),
+which names the opened object whatever happens to the path, and `fix-acls` reads the current ACL
+through the same descriptor. A refused path is an error: enrol stops (someone is racing it), and
+`fix-acls` reports it and carries on with the others. Lab test (HestiaCP 1.10.9, Debian 12): with
+a user swapping a home directory component for a link in a loop, 0.1.4's `fix-acls` granted the
+agent read access on the link's target in 55 of 400 runs, this version in none.
 
 **`$INCLUDE` in zone files** (found by the CI ACL test). The plan follows `$INCLUDE` in every
 text-format zone file, recursively up to 8 levels (the parser's limit), resolving relative names
