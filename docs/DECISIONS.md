@@ -195,16 +195,41 @@ skipped. A later line wins. The file is re-read only when its size or mtime chan
 picks the file from the detected panel (cPanel, DirectAdmin); other panels send no owner in
 v1. Both formats remain unverified against the owner's servers until prototype P1.
 
-## D-21 Loopback access and the unit drop-in (7.9)
+## D-21 Denied addresses, home directories and the unit drop-ins (7.9)
 
-The unit has `IPAddressDeny=localhost`, so the agent can't reach rndc on 127.0.0.1:953. Spec
-7.9 allows `IPAddressAllow=` for the PowerDNS API address. A second case the spec doesn't
-mention: if `/etc/resolv.conf` points at a loopback resolver (systemd-resolved's `127.0.0.53`,
-or a local named at `127.0.0.1`, common on cPanel servers), the agent could not resolve the
-PanelDNS host name at all. Enrol therefore writes
-`/etc/systemd/system/paneldns-agent.service.d/10-paneldns-network.conf` with
-`IPAddressAllow=` for the PowerDNS API host and any loopback nameserver, and removes it when
-neither applies. `IPAddressAllow=` can't name a port, so on a server whose resolver is a local
+The unit has `IPAddressDeny=localhost link-local multicast 10.0.0.0/8 172.16.0.0/12
+192.168.0.0/16 100.64.0.0/10 fc00::/7` (security review A-11; 0.1.4 denied `localhost` only), so
+the agent can't reach rndc on 127.0.0.1:953, a cloud metadata service on 169.254.169.254, or
+anything else on the LAN. The agent needs outbound HTTPS to PanelDNS, name resolution, and the
+PowerDNS API, which is always on loopback (spec 7.2: `PDNS_API_URL` must be a loopback address;
+enrol refuses a PowerDNS whose API listens on a LAN address only, and reaches one on `0.0.0.0` at
+127.0.0.1). Spec 7.9 allows `IPAddressAllow=` for the PowerDNS API address. The other legitimate
+needs are the resolvers in `/etc/resolv.conf` (systemd-resolved's `127.0.0.53`, a local named on
+`127.0.0.1` as on many cPanel servers, a cloud's link-local or VPC resolver such as AWS's
+`169.254.169.253` or `10.x.0.2`, Alibaba's `100.100.2.136`, a LAN resolver), and PanelDNS itself
+when its name resolves into a denied range (a PanelDNS on the same LAN). Enrol therefore writes
+`/etc/systemd/system/paneldns-agent.service.d/10-paneldns-network.conf` with `IPAddressAllow=`
+for each of those addresses that falls in a denied range, and removes it when none does. The
+addresses are worked out once, as root; a resolver that changes later (a new DHCP lease on a LAN)
+stays blocked until the drop-in is rewritten, which `--check` reports.
+
+**Home directories** (review A-12). The unit has `ProtectHome=yes`. 0.1.4 had `read-only` on every
+server only because HestiaCP keeps zone files under `/home/<user>/conf/dns`. Enrol writes
+`20-paneldns-home.conf` with `ProtectHome=read-only` when a path the ACL plan grants (named.conf,
+includes, zone files, `$INCLUDE`d files, the owner file, zone directories and traversed parents)
+is under `/home`, `/root` or `/run/user`, as named or with symbolic links resolved (a `/var/named`
+linked into `/home`). The ACL watcher's drop-in uses the same rule. The other supported panels
+(cPanel, DirectAdmin, Plesk, ISPConfig, Virtualmin, and PowerDNS servers) keep zone data under
+`/var` or `/etc`, so they get `yes`.
+
+**Keeping the drop-ins current.** `paneldns-agent update-units` (root) rewrites both drop-ins, and
+the ACL watcher's, from the config and the ACL plan. The package runs it on upgrade, on an
+enrolled server, before restarting the agent, so an upgrade that denies more can't cut off a
+server enrolled with an older version (its LAN resolver, or HestiaCP zones). `fix-acls` run by
+hand does the same. `--check`, which runs outside the unit, compares the drop-ins with what
+`update-units` would write and warns when they differ.
+
+`IPAddressAllow=` can't name a port, so on a server whose resolver is a local
 named on `127.0.0.1` the agent can reach `127.0.0.1:953` too; it still can't use rndc, because it
 can't read the rndc key (ACLs plus `InaccessiblePaths=`). `--check` reports a failed lookup of
 the PanelDNS host with this hint.

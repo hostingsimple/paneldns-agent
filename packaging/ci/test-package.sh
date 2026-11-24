@@ -60,12 +60,15 @@ grep -q '^INTERVAL=120 ' /etc/paneldns-agent.conf || fail "test edit not applied
 reinstall
 grep -q '^INTERVAL=120 ' /etc/paneldns-agent.conf || fail "upgrade replaced the edited config"
 
-echo "== remove deletes the ACL watcher drop-ins enrol wrote"
-mkdir -p /etc/systemd/system/paneldns-agent-acl.path.d /etc/systemd/system/paneldns-agent-acl.service.d
+echo "== remove deletes the drop-ins enrol wrote (ACL watcher and agent)"
+mkdir -p /etc/systemd/system/paneldns-agent-acl.path.d /etc/systemd/system/paneldns-agent-acl.service.d /etc/systemd/system/paneldns-agent.service.d
 echo "[Path]" > /etc/systemd/system/paneldns-agent-acl.path.d/watch.conf
 echo "[Service]" > /etc/systemd/system/paneldns-agent-acl.service.d/watch.conf
+echo "[Service]" > /etc/systemd/system/paneldns-agent.service.d/10-paneldns-network.conf
+echo "[Service]" > /etc/systemd/system/paneldns-agent.service.d/20-paneldns-home.conf
 remove
 [ ! -e /usr/bin/paneldns-agent ] || fail "binary left after removal"
 [ ! -e /etc/systemd/system/paneldns-agent-acl.path.d ] || fail "path drop-in left after removal"
 [ ! -e /etc/systemd/system/paneldns-agent-acl.service.d ] || fail "service drop-in left after removal"
+[ ! -e /etc/systemd/system/paneldns-agent.service.d ] || fail "agent drop-ins left after removal"
 echo "OK: $pkg"

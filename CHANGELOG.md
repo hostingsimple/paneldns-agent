@@ -19,6 +19,21 @@ Security review 2026-11, the remaining agent findings.
   agent read access to any file (review A-3, residual of 0.1.4's fix). A path that changed stops
   enrol and is reported by `fix-acls`; a file with several hard links in such a directory is
   refused too.
+- The service's unit now also denies link-local (cloud metadata services), multicast, RFC 1918,
+  shared (RFC 6598) and IPv6 unique local addresses, not only loopback (review A-11), and hides
+  home directories (`ProtectHome=yes`) instead of making them read-only on every server (review
+  A-12). Enrol writes the exceptions this server needs into drop-ins: `IPAddressAllow=` for the
+  PowerDNS API, the resolvers in `/etc/resolv.conf` and PanelDNS's own addresses when they fall
+  in a denied range, and `ProtectHome=read-only` only when zone data lives under `/home`
+  (HestiaCP), also through a symbolic link. The ACL watcher's home rule now follows links too.
+
+### Added
+
+- `paneldns-agent update-units` (root) rewrites this server's unit drop-ins (the agent's and the
+  ACL watcher's). The package runs it on upgrade before restarting the agent, so a server
+  enrolled with 0.1.4 or earlier gets its exceptions before the stricter unit starts; `fix-acls`
+  run by hand does it too. `--check` warns when the drop-ins are out of date (a resolver that
+  moved). Removing the package now also deletes the agent's own drop-ins.
 
 ## [0.1.4] - 2026-11-24
 

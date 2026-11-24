@@ -143,7 +143,9 @@ func runFixACLs(cfg config.Config, uid uint32, o fixOptions) int {
 		if stale, _ := watchStale(w); stale {
 			fmt.Fprintf(o.out, "fix-acls: warning: the watch list in %s is out of date (zone directories changed); run paneldns-agent fix-acls as root to update it\n", aclPathDropIn)
 		}
-	} else if _, err := syncWatchUnits(w, o.out, true); err != nil {
+	} else if err := updateUnits(cfg, plan, o.out, true); err != nil {
+		// By hand: the agent's drop-ins too (update-units), not only the
+		// watcher's.
 		fmt.Fprintln(o.out, "fix-acls: error:", err)
 		return 1
 	}

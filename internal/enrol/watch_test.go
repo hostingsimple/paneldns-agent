@@ -1,6 +1,8 @@
 package enrol
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -156,5 +158,20 @@ zone "new.example.com" { type master; file "/var/named/new.example.com.db"; };`,
 	w := PlanWatch(plan)
 	if !reflect.DeepEqual(w.Watch, []string{"/etc", "/var/named"}) || !reflect.DeepEqual(w.Writable, []string{"/etc/named.conf", "/var/named"}) {
 		t.Fatalf("watch %v writable %v", w.Watch, w.Writable)
+	}
+}
+
+// /var/named linked into /home (a big /home partition): a unit with
+// ProtectHome=yes couldn't follow the link, so it counts as under /home.
+func TestUnderHomeFollowsLinks(t *testing.T) {
+	withRoot(t, map[string]string{"/home/named/a.db": "", "/var/x/b.db": ""})
+	if err := os.Symlink(filepath.Join(Root, "home", "named"), filepath.Join(Root, "var", "named")); err != nil {
+		t.Skip("symbolic links not available:", err)
+	}
+	if UnderHome([]string{"/var/x/b.db", "/etc/named.conf"}) {
+		t.Error("no home path")
+	}
+	if !UnderHome([]string{"/var/named/a.db"}) || !UnderHome([]string{"/root"}) {
+		t.Error("home path missed")
 	}
 }

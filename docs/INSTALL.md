@@ -89,6 +89,17 @@ list is out of date; run `sudo paneldns-agent fix-acls` once by hand to fix the 
 both drop-ins and restart the watcher. `sudo paneldns-agent fix-acls` is also the manual fix
 whenever `--check` reports unreadable zone files.
 
+The agent's own unit denies loopback, link-local, multicast and the private and shared address
+ranges, and hides `/home`. Enrol writes what this server needs back into
+`/etc/systemd/system/paneldns-agent.service.d/`: `10-paneldns-network.conf` allows the PowerDNS
+API, the resolvers in `/etc/resolv.conf` and PanelDNS's own address when they fall in a denied
+range, and `20-paneldns-home.conf` makes home directories read-only instead of hidden when zone
+data lives there (HestiaCP). Package upgrades rewrite both (`paneldns-agent update-units`) before
+restarting the agent. If the server's resolver changes later (a new DHCP lease on a LAN), the
+agent can't resolve PanelDNS and `--check` says the drop-ins are out of date; run
+`sudo paneldns-agent update-units && sudo systemctl restart paneldns-agent` (`fix-acls` run by
+hand rewrites them too).
+
 With `--no-acl` or `--no-start`, enrol writes the drop-ins but doesn't enable the watcher; enable
 it with `systemctl enable --now paneldns-agent-acl.path`. If a burst of changes ever trips its
 trigger limit, `systemctl status` shows it failed; `systemctl restart paneldns-agent-acl.path`
@@ -123,5 +134,5 @@ is fixed by a newer version (spec 7.12).
 ## Remove
 
 `apt remove paneldns-agent` / `dnf remove paneldns-agent` stops the service and the ACL watcher
-and removes the watcher's drop-ins; the ACLs already granted stay. The package tells PanelDNS
+and removes the drop-ins enrol wrote for both; the ACLs already granted stay. The package tells PanelDNS
 nothing, so decommission the server in the dashboard as well.
