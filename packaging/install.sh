@@ -7,7 +7,11 @@
 # shell from the network: download it, read it, then run it as root.
 #
 #   sh install.sh                     # add the repository and install
-#   sh install.sh --url URL --code C  # ... then enrol this server
+#   sh install.sh --url URL --code - <<< 'CODE'
+#                                     # ... then enrol this server, reading the
+#                                     # code from standard input (a code on the
+#                                     # command line is visible to every user of
+#                                     # the server in the process list)
 set -eu
 
 FINGERPRINT=AAE3B3B1258CAAB0ED1AE1C3697D46A632CB9283
@@ -23,6 +27,12 @@ while [ $# -gt 0 ]; do
 done
 
 [ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
+if [ "$code" = - ]; then
+	IFS= read -r code || true
+	[ -n "$code" ] || { echo "--code -: no code on standard input" >&2; exit 2; }
+elif [ -n "$code" ]; then
+	echo "warning: a code on the command line is visible to other users in the process list; use --code - <<< 'CODE'" >&2
+fi
 command -v curl >/dev/null || { echo "curl is required" >&2; exit 1; }
 command -v gpg >/dev/null || { echo "gpg is required (apt install gnupg / dnf install gnupg2)" >&2; exit 1; }
 
@@ -54,7 +64,7 @@ else
 fi
 
 if [ -n "$url" ] && [ -n "$code" ]; then
-	PANELDNS_ENROL_CODE="$code" paneldns-agent enrol --url "$url"
+	PANELDNS_ENROL_CODE="$code" paneldns-agent enrol --url "$url" </dev/null
 else
-	echo "installed; now run: paneldns-agent enrol --url <PanelDNS URL> --code <code>"
+	echo "installed; now run: paneldns-agent enrol --url <PanelDNS URL> --code - <<< '<code>'"
 fi

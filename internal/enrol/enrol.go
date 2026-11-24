@@ -236,12 +236,28 @@ func chownState(dir string) error {
 	}
 	uid, _ := strconv.Atoi(u.Uid)
 	gid, _ := strconv.Atoi(u.Gid)
-	return filepath.WalkDir(dir, func(p string, _ fs.DirEntry, err error) error {
-		if err != nil {
+	for _, p := range stateFiles(dir) {
+		if err := os.Lchown(p, uid, gid); err != nil {
 			return err
 		}
-		return os.Lchown(p, uid, gid)
-	})
+	}
+	return nil
+}
+
+// stateFiles lists what enrol gives the agent user: the state directory
+// and the files enrol wrote in it, when they are regular files with one
+// link. Not a walk of the directory: the agent user owns it, and a hard
+// link it placed there (where fs.protected_hardlinks is off) would have
+// root hand it any file.
+func stateFiles(dir string) []string {
+	out := []string{dir}
+	for _, n := range []string{state.KeyFile, state.IdentityFile, state.SequenceFile, state.StateFile, state.LockFile, "pdns-api-key"} {
+		p := filepath.Join(dir, n)
+		if fi, err := os.Lstat(p); err == nil && fi.Mode().IsRegular() && linkCount(fi) <= 1 {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // DetectAll detects the zone source and the panel's owner file.

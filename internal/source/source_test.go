@@ -255,7 +255,7 @@ func TestPowerDNS(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	p := &PowerDNS{BaseURL: srv.URL, KeyFile: keyFile}
+	p := &PowerDNS{BaseURL: srv.URL, KeyFile: keyFile, CheckListener: noListenerCheck}
 	ctx := context.Background()
 	l, err := p.List(ctx)
 	if err != nil {
@@ -278,16 +278,16 @@ func TestPowerDNS(t *testing.T) {
 	if r, _ := p.Running(ctx); r != RunningYes {
 		t.Fatalf("running %v", r)
 	}
-	bad := &PowerDNS{BaseURL: srv.URL, KeyFile: path.Join(dir, "absent")}
+	bad := &PowerDNS{BaseURL: srv.URL, KeyFile: path.Join(dir, "absent"), CheckListener: noListenerCheck}
 	if _, err := bad.List(ctx); err == nil {
 		t.Fatal("missing key file accepted")
 	}
 	os.WriteFile(keyFile, []byte("wrong"), 0o600)
-	p2 := &PowerDNS{BaseURL: srv.URL, KeyFile: keyFile}
+	p2 := &PowerDNS{BaseURL: srv.URL, KeyFile: keyFile, CheckListener: noListenerCheck}
 	if _, err := p2.List(ctx); err == nil || !strings.Contains(err.Error(), "unauthorized") {
 		t.Fatalf("wrong key: %v", err)
 	}
-	down := &PowerDNS{BaseURL: "http://127.0.0.1:1", KeyFile: keyFile}
+	down := &PowerDNS{BaseURL: "http://127.0.0.1:1", KeyFile: keyFile, CheckListener: noListenerCheck}
 	if r, _ := down.Running(ctx); r != RunningNo {
 		t.Fatalf("down server running %v", r)
 	}
@@ -308,5 +308,109 @@ func TestBINDListingReportsInlineKey(t *testing.T) {
 	m.put("/etc/named.conf", namedConf)
 	if l, _ := b.List(context.Background()); l.InlineKey != nil {
 		t.Fatalf("false positive: %v", l.InlineKey)
+	}
+}
+
+// A zone file's $INCLUDE may only reach named's directory and the zone
+// directories (the files enrol grants access to), never the agent's own
+// state directory or key material, whether named-compilezone or the
+// built-in parser reads the zone.
+func TestBINDRefusesIncludesOutsideZoneDirectories(t *testing.T) {
+	for _, tt := range []struct{ name, include, want string }{
+		{"agent key", "$INCLUDE /var/lib/paneldns-agent/agent.key\n", "never reads"},
+		{"etc", "$INCLUDE /etc/passwd\n", "outside named's directory"},
+		{"dot-dot", "$INCLUDE ../../etc/passwd\n", "outside named's directory"},
+		{"nested", "$INCLUDE inc/www.db\n", "outside named's directory"},
+		{"dnssec key", "$INCLUDE \"Kexample.com.+013+12345.private\"\n", "never reads"},
+	} {
+		for _, compile := range []bool{false, true} {
+			m := newFS()
+			m.put("/var/named/example.com.db", strings.Replace(exampleCom, "$INCLUDE inc/www.db\n", tt.include, 1))
+			if tt.name == "nested" {
+				m.put("/var/named/inc/www.db", "$INCLUDE /home/someone/public_html/wp-config.php\n")
+			}
+			m.put("/var/lib/paneldns-agent/agent.key", "-----BEGIN PRIVATE KEY-----\n")
+			m.put("/etc/passwd", "root:x:0:0::/root:/bin/sh\n")
+			b := m.bind(&BIND{ConfFile: "/etc/named.conf", NoCompilezone: !compile, Compilezone: "/usr/sbin/named-compilezone"})
+			ran := false
+			b.Run = func(context.Context, []string) ([]byte, []byte, error) { ran = true; return nil, nil, os.ErrInvalid }
+			l, err := b.List(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = b.Read(context.Background(), l.Zones[0])
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("%s (compile %v): got %v, want %q", tt.name, compile, err, tt.want)
+			}
+			if ran {
+				t.Errorf("%s: named-compilezone ran on a zone with a refused $INCLUDE", tt.name)
+			}
+		}
+	}
+	// An include inside the zone directories still works.
+	m := newFS()
+	b := m.bind(&BIND{ConfFile: "/etc/named.conf", NoCompilezone: true})
+	l, _ := b.List(context.Background())
+	if _, err := b.Read(context.Background(), l.Zones[0]); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The PowerDNS API key is read-write: a redirect must not carry it to
+// another address.
+func TestPowerDNSDoesNotFollowRedirects(t *testing.T) {
+	dir := t.TempDir()
+	keyFile := path.Join(dir, "key")
+	os.WriteFile(keyFile, []byte("secret-test-key\n"), 0o600)
+	leaked := ""
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		leaked = r.Header.Get("X-API-Key")
+		w.Write([]byte(`[]`))
+	}))
+	defer other.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+r.URL.RequestURI(), http.StatusFound)
+	}))
+	defer srv.Close()
+	p := &PowerDNS{BaseURL: srv.URL, KeyFile: keyFile, CheckListener: noListenerCheck}
+	if _, err := p.List(context.Background()); err == nil || !strings.Contains(err.Error(), "302") {
+		t.Errorf("redirect not refused: %v", err)
+	}
+	if leaked != "" {
+		t.Fatalf("the API key reached the redirect target: %q", leaked)
+	}
+}
+
+// A zone name is a positional argument of named-compilezone; one starting
+// with "-" must not reach it as an option.
+func TestBINDRefusesZoneNameLikeAnOption(t *testing.T) {
+	m := newFS()
+	m.put("/etc/named.conf", `options { directory "/var/named"; };
+zone "-o/var/lib/paneldns-agent/x" { type master; file "example.com.db"; };`)
+	b := m.bind(&BIND{ConfFile: "/etc/named.conf", Compilezone: "/usr/sbin/named-compilezone"})
+	ran := false
+	b.Run = func(context.Context, []string) ([]byte, []byte, error) { ran = true; return nil, nil, nil }
+	l, err := b.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Read(context.Background(), l.Zones[0]); err == nil || ran {
+		t.Fatalf("zone %q read (named-compilezone ran: %v): %v", l.Zones[0].Name, ran, err)
+	}
+}
+
+// The built-in parser holds the zone in memory: a file over the cap is
+// refused instead of risking the unit's MemoryMax.
+func TestBINDFallbackCapsZoneSize(t *testing.T) {
+	m := newFS()
+	big := "$TTL 60\n@ IN SOA ns1.example.net. h.example.net. 7 1 1 1 1\n" + strings.Repeat("a IN A 192.0.2.1\n", MaxCompiledSize/17+1)
+	m.put("/var/named/example.net.db", big)
+	b := m.bind(&BIND{ConfFile: "/etc/named.conf", NoCompilezone: true})
+	l, err := b.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Read(context.Background(), l.Zones[1]); err == nil || !strings.Contains(err.Error(), "larger than") {
+		t.Fatalf("oversized zone: %v", err)
 	}
 }

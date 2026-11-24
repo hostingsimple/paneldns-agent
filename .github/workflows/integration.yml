@@ -95,18 +95,24 @@ jobs:
           cd /
           sudo -u paneldns-agent env PANELDNS_ACL_TEST_CONF=/srv/acl/named.conf /usr/local/bin/paneldns-integration.test -test.run TestACLAccess -test.v
 
-      # cPanel creates new zone files with mode 0600: the inherited
-      # u:paneldns-agent:r entry lands with mask::---, so the agent can't read
-      # them (DECISIONS D-30). Reproduce that, then let fix-acls repair it.
+      # cPanel creates new zone files with mode 0600, so the agent can't read
+      # them (DECISIONS D-30); here /srv/acl also holds named.conf and
+      # rndc.key, so it has no default ACL (review A-7) and the new file
+      # inherits nothing. Reproduce that, then let fix-acls repair it.
       - name: fix-acls restores read on a new 0600 zone file
         run: |
           set -euo pipefail
           CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/paneldns-agent" ./cmd/paneldns-agent
           sudo install -m 0755 "$RUNNER_TEMP/paneldns-agent" /usr/bin/paneldns-agent
           . packaging/ci/acl-addzone.sh
+          if sudo getfacl -c /srv/acl | grep -q '^default:user:paneldns-agent:'; then
+            echo "default ACL on /srv/acl, which holds named.conf and rndc.key"; exit 1
+          fi
           addzone new1.example.org
           sudo getfacl -c /srv/acl/new1.example.org.db
-          hasacl /srv/acl/new1.example.org.db 'mask::---'
+          if sudo getfacl -c /srv/acl/new1.example.org.db | grep -q '^user:paneldns-agent:'; then
+            echo "the new zone file inherited an agent entry"; exit 1
+          fi
           if sudo -u paneldns-agent cat /srv/acl/new1.example.org.db >/dev/null 2>&1; then
             echo "the agent can read the 0600 file before fix-acls: the test doesn't reproduce the finding"; exit 1
           fi
@@ -122,6 +128,25 @@ jobs:
           if sudo -u paneldns-agent cat /srv/acl/rndc.key >/dev/null 2>&1; then
             echo "the agent can read rndc.key"; exit 1
           fi
+          # Review A-7: an older agent left a default ACL on /srv/acl, so a key
+          # file created there later (umask 027, mode 0640) inherited read.
+          # fix-acls removes the agent's default entry and the inherited one.
+          sudo setfacl -d -m u:paneldns-agent:r /srv/acl
+          printf 'key "later" { algorithm hmac-sha256; secret "c2VjcmV0"; };\n' | sudo sh -c 'umask 027; cat > /srv/acl/later.key'
+          sudo getfacl -c /srv/acl/later.key
+          if ! sudo -u paneldns-agent cat /srv/acl/later.key >/dev/null 2>&1; then
+            echo "the agent can't read later.key before fix-acls: the test doesn't reproduce the finding"; exit 1
+          fi
+          sudo paneldns-agent fix-acls --config /srv/acl/paneldns-agent.conf | tee "$RUNNER_TEMP/fix3.txt"
+          grep -q '^fix-acls: 2 fixed (/srv/acl, /srv/acl/later.key)' "$RUNNER_TEMP/fix3.txt"
+          sudo getfacl -c /srv/acl /srv/acl/later.key
+          if sudo getfacl -c /srv/acl | grep -q '^default:user:paneldns-agent:'; then
+            echo "fix-acls left the agent's default entry on /srv/acl"; exit 1
+          fi
+          if sudo -u paneldns-agent cat /srv/acl/later.key >/dev/null 2>&1; then
+            echo "the agent can read later.key after fix-acls"; exit 1
+          fi
+          sudo rm /srv/acl/later.key
 
       - name: the ACL watcher units fix new and replaced files by themselves
         run: |

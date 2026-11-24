@@ -6,6 +6,57 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.1.4] - not yet released
+
+Security review 2026-11 (agent findings A-1 to A-10; A-3 for planted links only).
+
+### Security
+
+- Enrol now trusts a running `named` process to say which named.conf it reads only when the
+  process runs as root or as the `named`/`bind` user. Before, any process called `named` counted,
+  so a local user could choose the config enrol reads, and with it the zones the agent pushes and
+  the files enrol grants it read access to.
+- `enrol --code -` reads the one-time code from standard input, and `install.sh --code -` does
+  the same. A code on the command line is visible to every user of the server while enrol runs,
+  and whoever sends it first enrols their own key; enrol and `install.sh` now warn when given
+  the code that way. The dashboard's install command should switch to `--code - <<< 'CODE'`.
+- The read-access plan of enrol and `fix-acls` (both root) no longer grants an ACL through a
+  symbolic link unless root owns the link and the directory holding it can only be changed by
+  root. `setfacl` follows links, so a link a user or the `named` user could plant in a planned
+  path redirected the grant to any file. Such paths are skipped with a warning; that zone then
+  fails to read and is reported.
+- The running agent applies the `$INCLUDE` rule enrol already enforced: a zone whose `$INCLUDE`
+  (at any depth) leaves named's directory and the zone directories, or names the agent's state
+  directory or key material, is not read (reported as `read_failed`). Before, `named-compilezone`
+  and the built-in parser read any file the agent could open into the zone.
+- The PowerDNS API client no longer follows redirects. Go forwards the `X-API-Key` header
+  (a read-write key) to the redirect target, wherever it is.
+- A zone whose name starts with `-` is not passed to `named-compilezone`, where it would be read
+  as an option. Zone files and `$INCLUDE`d files the agent reads itself are capped at 16 MB, the
+  limit `named-compilezone` output already had.
+- Before each PowerDNS API request the agent checks, in `/proc/net/tcp` and `tcp6`, that every
+  socket listening on the API address belongs to root or the `pdns`/`powerdns` user, and sends
+  no API key otherwise. Any local user can listen on a free port above 1023, for example while
+  PowerDNS restarts.
+- Enrol (root) changes the owner of the state directory and of the files it wrote there only,
+  instead of everything it finds in that agent-owned directory, and skips files with more than
+  one hard link.
+- A zone directory that also holds named's configuration or key files (Debian's `/etc/bind`, a
+  directory with `rndc.key`, `*.private` or `*.key` files) no longer gets a default ACL. A key
+  created there later (`rndc-confgen -a`, `tsig-keygen > x.key`) inherited
+  `u:paneldns-agent:r`. New zone files in such a directory get their read ACL from the root
+  watcher. `fix-acls` removes the agent's default entry that an earlier version left on such a
+  directory, and the agent's entry on key files there, without recalculating the mask, and the
+  plan warns about key files every local user can read (DECISIONS D-22).
+
+### Fixed
+
+- Enrol treated a bare `api` line in `pdns.conf` as unset and reported the PowerDNS API as off.
+  PowerDNS reads a bare boolean key as on; `api=no`, `api=off` and `api=false` still count as
+  off.
+
+## [0.1.3] and earlier
+
 ### Added
 
 - Root ACL watcher (DECISIONS D-30): `paneldns-agent fix-acls` (root only) re-grants the agent's

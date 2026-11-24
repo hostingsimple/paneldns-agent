@@ -101,6 +101,7 @@ func TestDetectSourcePrefersRunningNamed(t *testing.T) {
 				"/etc/bind/named.conf": "",
 				"/proc/2831/comm":      "named\n",
 				"/proc/2831/cmdline":   tt.cmdline,
+				"/proc/2831/status":    "Name:\tnamed\nUid:\t0\t0\t0\t0\n",
 				"/proc/77/comm":        "sshd\n",
 			})
 			stubVersion(t, tt.version)
@@ -118,6 +119,33 @@ func TestDetectSourcePrefersRunningNamed(t *testing.T) {
 	}
 }
 
+// A local user can start a process called "named" with a -c of their own;
+// only a named running as root or as the named/bind user counts. Here the
+// real named (no -c, Debian) runs as bind and an impostor as uid 1001.
+func TestDetectSourceIgnoresImpostorNamed(t *testing.T) {
+	withRoot(t, map[string]string{
+		"/etc/passwd":             "root:x:0:0::/root:/bin/sh\nbind:x:113:118::/var/cache/bind:/usr/sbin/nologin\nmallory:x:1001:1001::/home/mallory:/bin/bash\n",
+		"/etc/bind/named.conf":    "",
+		"/home/mallory/evil.conf": "zone \"example.com\" { type primary; file \"/etc/shadow\"; };",
+		"/proc/1001/comm":         "named\n",
+		"/proc/1001/cmdline":      "/home/mallory/named\x00-c\x00/home/mallory/evil.conf\x00",
+		"/proc/1001/status":       "Name:\tnamed\nUid:\t1001\t1001\t1001\t1001\n",
+		"/proc/2831/comm":         "named\n",
+		"/proc/2831/cmdline":      "/usr/sbin/named\x00-f\x00-u\x00bind\x00",
+		"/proc/2831/status":       "Name:\tnamed\nUid:\t113\t113\t113\t113\n",
+	})
+	old := namedVersionOutput
+	namedVersionOutput = func() ([]byte, error) { return []byte("  named configuration:  /etc/bind/named.conf\n"), nil }
+	t.Cleanup(func() { namedVersionOutput = old })
+	d, err := DetectSource()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.ZonesFile != "/etc/bind/named.conf" {
+		t.Fatalf("ZONES_FILE %s: an impostor named chose the config", d.ZonesFile)
+	}
+}
+
 func TestDetectSourceNamedNotRunningNotesTheChoice(t *testing.T) {
 	withRoot(t, map[string]string{"/etc/named.conf": "", "/etc/bind/named.conf": "", "/proc/77/comm": "sshd\n"})
 	d, err := DetectSource()
@@ -126,5 +154,60 @@ func TestDetectSourceNamedNotRunningNotesTheChoice(t *testing.T) {
 	}
 	if d.ZonesFile != "/etc/named.conf" || !strings.Contains(strings.Join(d.Notes, "\n"), "check ZONES_FILE") {
 		t.Fatalf("got %s, notes %q", d.ZonesFile, d.Notes)
+	}
+}
+
+// PowerDNS reads a bare boolean key ("api") as on; enrol used to read it as
+// unset and report the API off.
+func TestDetectSourcePowerDNSAPISwitch(t *testing.T) {
+	const rest = "api-key=plainkey\nwebserver-port=8081\n"
+	tests := []struct {
+		name, apiLine string
+		on            bool
+	}{
+		{"bare api", "api\n", true},
+		{"bare api with spaces", "  api  \n", true},
+		{"api=yes", "api=yes\n", true},
+		{"api = yes with spaces", "api = yes\n", true},
+		{"api=no", "api=no\n", false},
+		{"api=false", "api=false\n", false},
+		{"api=off", "api=off\n", false},
+		{"commented # api", "# api\n", false},
+		{"commented #api=yes", "#api=yes\n", false},
+		{"absent", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			withRoot(t, map[string]string{"/etc/powerdns/pdns.conf": tt.apiLine + rest})
+			d, err := DetectSource()
+			if !tt.on {
+				if err == nil || !strings.Contains(err.Error(), "HTTP API is off") {
+					t.Fatalf("want the API reported off, got %v (%+v)", err, d)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if d.ZoneSource != "powerdns-api" || d.PDNSAPIURL != "http://127.0.0.1:8081" || d.PDNSAPIKey != "plainkey" {
+				t.Fatalf("got %+v", d)
+			}
+		})
+	}
+}
+
+// A bare boolean in an include-dir file overrides an earlier api=no, as it
+// does in PowerDNS (later settings win).
+func TestDetectSourcePowerDNSBareAPIInIncludeDir(t *testing.T) {
+	withRoot(t, map[string]string{
+		"/etc/powerdns/pdns.conf":       "api=no\napi-key=plainkey\ninclude-dir=/etc/powerdns/pdns.d\n",
+		"/etc/powerdns/pdns.d/api.conf": "api\n",
+	})
+	d, err := DetectSource()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.ZoneSource != "powerdns-api" {
+		t.Fatalf("got %+v", d)
 	}
 }

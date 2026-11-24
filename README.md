@@ -22,7 +22,7 @@ Signed `.deb` and `.rpm` packages come from `https://packages.paneldns.com`; see
 
 ## How it works
 
-1. `paneldns-agent enrol --url https://app.paneldns.example --code <one-time code>` (as root)
+1. `paneldns-agent enrol --url https://app.paneldns.example --code - <<< '<one-time code>'` (as root)
    detects the zone source and the panel's owner file, generates an Ed25519 key pair on the
    server, sends only the public key with the code, grants the `paneldns-agent` user read
    access through POSIX ACLs (never group membership in `named`, `bind` or `pdns`), runs

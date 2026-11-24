@@ -79,7 +79,7 @@ func DetectSource() (Detected, error) {
 		}
 	}
 	if pdnsFile != "" {
-		if !yes(pdns["api"]) {
+		if v, set := pdns["api"]; !set || !pdnsOn(v) {
 			return d, fmt.Errorf("found %s but its HTTP API is off (api=no); enable api=yes with an api-key, or use BIND", pdnsFile)
 		}
 		key := pdns["api-key"]
@@ -110,15 +110,20 @@ func DetectSource() (Detected, error) {
 	return d, fmt.Errorf("no named.conf (%s) and no pdns.conf found; set ZONE_SOURCE and ZONES_FILE in %s by hand", strings.Join(namedConfs, ", "), config.DefaultPath)
 }
 
-func yes(v string) bool {
+// pdnsOn reads a pdns.conf boolean that is present in the file. PowerDNS
+// turns a bare key ("api") into --api with an empty value and treats
+// anything but "no" or "off" as on (ArgvMap::mustDo), so a bare key is on.
+// Any other value, "false" and "0" included, is taken as off: PowerDNS
+// would read those as on, but enrol refuses rather than guess.
+func pdnsOn(v string) bool {
 	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "yes", "true", "1", "on":
+	case "", "yes", "true", "1", "on":
 		return true
 	}
 	return false
 }
 
-// readPDNSConf reads key=value pairs from pdns.conf and its include-dir.
+// readPDNSConf reads key=value pairs and bare keys from pdns.conf and its include-dir.
 func readPDNSConf() (map[string]string, string) {
 	vals := map[string]string{}
 	for _, p := range pdnsConfs {
@@ -149,10 +154,10 @@ func readKV(p string, vals map[string]string) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		k, v, ok := strings.Cut(line, "=")
-		if ok {
-			vals[strings.TrimSpace(k)] = strings.TrimSpace(v)
-		}
+		// A line without "=" is a bare key, which PowerDNS reads as the key
+		// with an empty value (on, for a boolean); keep it, set to "".
+		k, v, _ := strings.Cut(line, "=")
+		vals[strings.TrimSpace(k)] = strings.TrimSpace(v)
 	}
 }
 
@@ -194,12 +199,22 @@ func runningNamedConf() (conf, how string) {
 		return "", ""
 	}
 	found := false
+	var trusted map[string]bool
 	for _, e := range entries {
 		if !e.IsDir() || strings.Trim(e.Name(), "0123456789") != "" {
 			continue
 		}
 		comm, err := os.ReadFile(rooted("/proc/" + e.Name() + "/comm"))
 		if err != nil || strings.TrimSpace(string(comm)) != "named" {
+			continue
+		}
+		// Any local user can start a process called "named" with a -c of
+		// their choosing; only one running as root or as named's own user
+		// is the real named.
+		if trusted == nil {
+			trusted = namedUIDs()
+		}
+		if !procRunsAs(e.Name(), trusted) {
 			continue
 		}
 		found = true
@@ -230,6 +245,46 @@ func runningNamedConf() (conf, how string) {
 		}
 	}
 	return "", ""
+}
+
+// namedUIDs are the uids a real named runs as: root, which starts it, and
+// the named or bind user it switches to with -u (from /etc/passwd; system
+// users are always local).
+func namedUIDs() map[string]bool {
+	uids := map[string]bool{"0": true}
+	b, err := os.ReadFile(rooted("/etc/passwd"))
+	if err != nil {
+		return uids
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		f := strings.Split(line, ":")
+		if len(f) > 2 && (f[0] == "named" || f[0] == "bind") && f[2] != "" {
+			uids[f[2]] = true
+		}
+	}
+	return uids
+}
+
+// procRunsAs reports whether every uid of a process (real, effective,
+// saved, file system; the Uid: line of /proc/PID/status) is in uids.
+func procRunsAs(pid string, uids map[string]bool) bool {
+	b, err := os.ReadFile(rooted("/proc/" + pid + "/status"))
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 2 || f[0] != "Uid:" {
+			continue
+		}
+		for _, u := range f[1:] {
+			if !uids[u] {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 // otherNamedConfs lists the usual named.conf locations that exist besides chosen.
