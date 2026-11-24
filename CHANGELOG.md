@@ -6,7 +6,7 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
-## [0.1.4] - not yet released
+## [0.1.4] - 2026-11-24
 
 Security review 2026-11 (agent findings A-1 to A-10; A-3 for planted links only).
 
