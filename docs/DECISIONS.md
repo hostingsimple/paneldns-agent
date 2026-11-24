@@ -164,7 +164,11 @@ The key pair is generated on the server with `crypto/rand` and stored as PKCS #8
 Enrolment writes nothing until PanelDNS has accepted the code; then it writes the key,
 `identity.json`, `sequence.json` (the epoch from the answer) and an empty `state.json`, so the
 first run sends a full inventory without an extra `/epoch` call. A re-enrol replaces all four.
-The enrolment code may be given as `--code` or in `PANELDNS_ENROL_CODE`.
+The enrolment code is read from standard input with `--code -` (since 0.1.4, security review
+A-2: `paneldns-agent enrol --url URL --code - <<< 'CODE'`; `install.sh --code -` likewise), or
+from `PANELDNS_ENROL_CODE`. `--code CODE` still works but warns: a code on the command line is
+visible to every local user in `/proc/PID/cmdline` while enrol runs, and whoever sends it first
+enrols their own key.
 
 ## D-18 Zone source detection at enrolment (7.1, 7.3)
 
@@ -475,9 +479,10 @@ The maintainer scripts only create the system user and group, fix the two modes,
 on removal. They never enable it on a first install (enrol does that), and they make no network
 call. `dpkg --purge` removes the state directory and leaves the user. File times come from the
 commit, so packages and tarballs are reproducible. The package maintainer field is
-`HostingSimple` until the owner names a contact address. `packaging/gpg.key` is a **placeholder**:
-GitHub has no public copy of the key, and the release job refuses to run until the owner commits
-the real public key.
+`HostingSimple` until the owner names a contact address. `packaging/gpg.key` is the public half of
+the release signing key (ed25519, fingerprint `AAE3B3B1258CAAB0ED1AE1C3697D46A632CB9283`,
+"PanelDNS Packages"), the same file the repository serves at `https://packages.paneldns.com/gpg.key`;
+the private key is never in this repository (SECURITY.md, "Release signing").
 
 ## D-30 The root ACL watcher (7.9)
 

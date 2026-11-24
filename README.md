@@ -12,7 +12,8 @@ configuration or panel data, and never downloads or replaces code.
 This repository is public so that a hosting company can read exactly what it installs, rebuild it
 and compare the result with the published packages.
 
-> Status: pre-release (0.1.0-dev); no release has been published yet.
+> Status: released. Signed packages are published at `https://packages.paneldns.com`; the
+> versions and what changed in each are in [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Install
 
