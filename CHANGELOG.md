@@ -6,6 +6,8 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-11-24
+
 Security review 2026-11, the remaining agent findings.
 
 ### Security
