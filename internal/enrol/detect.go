@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/hostingsimple/paneldns-agent/internal/config"
 	"github.com/hostingsimple/paneldns-agent/internal/syspath"
@@ -79,8 +80,14 @@ func DetectSource() (Detected, error) {
 		}
 	}
 	if pdnsFile != "" {
-		if v, set := pdns["api"]; !set || !pdnsOn(v) {
-			return d, fmt.Errorf("found %s but its HTTP API is off (api=no); enable api=yes with an api-key, or use BIND", pdnsFile)
+		v, set := pdns["api"]
+		switch {
+		case !set:
+			return d, fmt.Errorf("found %s but it doesn't set api, so the PowerDNS HTTP API is off (its default); set api=yes with an api-key, or use BIND", pdnsFile)
+		case pdnsBool(v) == pdnsOff:
+			return d, fmt.Errorf("found %s but its HTTP API is off (api=%s); set api=yes with an api-key, or use BIND", pdnsFile, v)
+		case pdnsBool(v) == pdnsUnclear:
+			return d, fmt.Errorf("found %s with api=%s, which PowerDNS reads as on (only no and off turn it off) but looks meant as off; write api=yes to use the API with the agent, or api=no", pdnsFile, v)
 		}
 		key := pdns["api-key"]
 		if key == "" {
@@ -110,17 +117,30 @@ func DetectSource() (Detected, error) {
 	return d, fmt.Errorf("no named.conf (%s) and no pdns.conf found; set ZONE_SOURCE and ZONES_FILE in %s by hand", strings.Join(namedConfs, ", "), config.DefaultPath)
 }
 
-// pdnsOn reads a pdns.conf boolean that is present in the file. PowerDNS
-// turns a bare key ("api") into --api with an empty value and treats
-// anything but "no" or "off" as on (ArgvMap::mustDo), so a bare key is on.
-// Any other value, "false" and "0" included, is taken as off: PowerDNS
-// would read those as on, but enrol refuses rather than guess.
-func pdnsOn(v string) bool {
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "", "yes", "true", "1", "on":
-		return true
+// A pdns.conf boolean as enrol reads it.
+const (
+	pdnsOnValue = iota
+	pdnsOff
+	pdnsUnclear
+)
+
+// pdnsBool reads a pdns.conf boolean that is present in the file.
+// PowerDNS's ArgvMap::mustDo is on for every value but exactly "no" and
+// "off"; a bare key ("api") is set to "" and so is on. Enrol follows it for
+// those, and for the usual spellings of on (yes, true, 1, on, any case).
+// Anything else PowerDNS also reads as on, but "false", "0", "No", "OFF" and
+// the like look meant as off, and enrol copies a read-write API key on this
+// answer, so it refuses those instead of guessing either way.
+func pdnsBool(v string) int {
+	switch v {
+	case "no", "off":
+		return pdnsOff
 	}
-	return false
+	switch strings.ToLower(v) {
+	case "", "yes", "true", "1", "on":
+		return pdnsOnValue
+	}
+	return pdnsUnclear
 }
 
 // readPDNSConf reads key=value pairs and bare keys from pdns.conf and its include-dir.
@@ -130,11 +150,11 @@ func readPDNSConf() (map[string]string, string) {
 		if !fileExists(p) {
 			continue
 		}
-		readKV(rooted(p), vals)
+		readPDNSFile(rooted(p), vals)
 		if dir := vals["include-dir"]; dir != "" {
 			matches, _ := filepath.Glob(rooted(path.Join(dir, "*.conf")))
 			for _, m := range matches {
-				readKV(m, vals)
+				readPDNSFile(m, vals)
 			}
 		}
 		return vals, p
@@ -142,6 +162,44 @@ func readPDNSConf() (map[string]string, string) {
 	return vals, ""
 }
 
+// readPDNSFile reads a pdns.conf as PowerDNS's ArgvMap::parseFile does: a
+// line ending in a backslash continues on the next; a "#" at the start of
+// the line or after white space starts a comment (so "api=yes  # on" is
+// "yes", but "#" inside a value, as in a key, stays); a line without "="
+// is a bare key with an empty value (on, for a boolean); the key is
+// trimmed, and so is the value.
+func readPDNSFile(p string, vals map[string]string) {
+	f, err := os.Open(p)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	line := ""
+	for sc.Scan() {
+		part := strings.TrimRightFunc(sc.Text(), unicode.IsSpace)
+		if strings.HasSuffix(part, "\\") {
+			line += strings.TrimSuffix(part, "\\")
+			continue
+		}
+		line += part
+		for i := 0; i < len(line); i++ {
+			if line[i] == '#' && (i == 0 || unicode.IsSpace(rune(line[i-1]))) {
+				line = line[:i]
+				break
+			}
+		}
+		l := strings.TrimSpace(line)
+		line = ""
+		if l == "" {
+			continue
+		}
+		k, v, _ := strings.Cut(l, "=")
+		vals[strings.TrimSpace(k)] = strings.TrimSpace(v)
+	}
+}
+
+// readKV reads shell-style KEY=value lines (/etc/sysconfig/named).
 func readKV(p string, vals map[string]string) {
 	f, err := os.Open(p)
 	if err != nil {

@@ -265,3 +265,26 @@ func TestToleratesMissingSemicolons(t *testing.T) {
 		t.Fatalf("zones %v", got)
 	}
 }
+
+// Every key-directory, whichever view is read, relative to named's
+// directory and inside the chroot.
+func TestKeyDirectories(t *testing.T) {
+	s := `options { directory "/var/named"; key-directory "keys"; };
+view "internal" { match-clients { 10.0.0.0/8; }; key-directory "/etc/keys/internal";
+  zone "a.example" { type master; file "a.db"; key-directory "/etc/keys/a"; }; };
+view "external" { zone "b.example" { type master; file "b.db"; key-directory "keys/"; }; };`
+	fs := fakeFS{"/var/named/run-root/etc/named.conf": &s}
+	c, err := Read(fs.loader("/var/named/run-root"), "/var/named/run-root/etc/named.conf", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"/var/named/run-root/etc/keys/a", "/var/named/run-root/etc/keys/internal", "/var/named/run-root/var/named/keys"}
+	if !reflect.DeepEqual(c.KeyDirs, want) {
+		t.Fatalf("key dirs %v, want %v", c.KeyDirs, want)
+	}
+	none := `options { directory "/var/named"; };`
+	fs = fakeFS{"/etc/named.conf": &none}
+	if c, _ := Read(fs.loader(""), "/etc/named.conf", ""); len(c.KeyDirs) != 0 {
+		t.Fatalf("default key directory listed: %v", c.KeyDirs)
+	}
+}

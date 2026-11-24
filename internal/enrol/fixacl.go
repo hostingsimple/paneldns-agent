@@ -182,6 +182,16 @@ func fixCommands(p *ACLPlan, o FixOptions) (map[string][][]string, map[string]*t
 	for f := range strip {
 		todo[f] = want{strip: true}
 	}
+	// key-directory folders (review A-7, D-22): never a default entry, and
+	// no access entry beyond the x a traversed one needs.
+	for _, d := range p.KeyDirs {
+		w, planned := todo[d]
+		if !planned {
+			w = want{strip: true}
+		}
+		w.dir, w.undef, w.def = true, true, false
+		todo[d] = w
+	}
 	paths := make([]string, 0, len(todo))
 	for k := range todo {
 		paths = append(paths, k)

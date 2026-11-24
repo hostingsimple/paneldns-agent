@@ -52,6 +52,15 @@ Security review 2026-11, the remaining agent findings.
   whether PanelDNS accepts the new key, then keeps whichever key PanelDNS holds. A switch
   interrupted by a crash is finished at the next start. Works with the released PanelDNS; no
   server change.
+- Enrol reads `pdns.conf` as PowerDNS does: a `#` after white space starts a comment, so
+  `api=yes  # on` is on (it was refused), and a line ending in `\` continues on the next.
+  Booleans follow PowerDNS's `mustDo`: only `no` and `off` are off. `false`, `0` and other values
+  PowerDNS also reads as on are now refused with that explanation rather than taken as off; write
+  `api=yes`. The refusal says whether `api` was missing or set to off.
+- The ACL plan reads named.conf's `key-directory` (options, views, zones). A DNSSEC key folder
+  outside the zone directories was not known to the plan; now no key folder gets `rx` or a
+  default ACL, even when a zone `$INCLUDE`s a public key from it, and `fix-acls` removes any agent
+  entry from the folder and its key files.
 
 ## [0.1.4] - 2026-11-24
 

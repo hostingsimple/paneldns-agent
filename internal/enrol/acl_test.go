@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -403,5 +404,58 @@ func TestPlanACLsWarnsOnWorldReadableKey(t *testing.T) {
 	w := strings.Join(p.Warnings, "\n")
 	if !strings.Contains(w, "key file /etc/bind/xfer.key has mode 0644") || strings.Contains(w, "rndc.key") {
 		t.Fatalf("warnings %q", p.Warnings)
+	}
+}
+
+// named.conf's key-directory folders (options, a view, a zone) are known to
+// the plan: never rx or a default ACL, their private keys stripped of any
+// agent entry, even when a zone $INCLUDEs a public key from one.
+func TestPlanACLsKeyDirectory(t *testing.T) {
+	soa := "$TTL 300\n@ IN SOA ns1.example.net. h.example.net. 1 1 1 1 1\n"
+	withRoot(t, map[string]string{
+		"/etc/named.conf": `options { directory "/var/named"; key-directory "keys"; };
+zone "example.com" { type master; file "example.com.db"; };
+zone "example.net" { type master; file "/srv/zones/example.net.db"; key-directory "/srv/zones"; };
+zone "example.org" { type master; file "example.org.db"; key-directory "/etc/dnssec/org"; };`,
+		"/var/named/example.com.db":                   soa + "$INCLUDE keys/Kexample.com.+013+1.key\n",
+		"/var/named/example.org.db":                   soa,
+		"/var/named/keys/Kexample.com.+013+1.key":     "example.com. IN DNSKEY 257 3 13 dGVzdA==\n",
+		"/var/named/keys/Kexample.com.+013+1.private": "Private-key-format: v1.3\n",
+		"/srv/zones/example.net.db":                   soa,
+		"/srv/zones/Kexample.net.+013+2.private":      "Private-key-format: v1.3\n",
+		"/etc/dnssec/org/Kexample.org.+013+3.private": "Private-key-format: v1.3\n",
+	})
+	cfg := config.Defaults()
+	cfg.ZonesFile = "/etc/named.conf"
+	p, err := PlanACLs(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"/etc/dnssec/org", "/srv/zones", "/var/named/keys"}; !reflect.DeepEqual(p.KeyDirs, want) {
+		t.Fatalf("key dirs %v, want %v", p.KeyDirs, want)
+	}
+	for _, d := range p.Dirs {
+		if d == "/var/named/keys" || d == "/etc/dnssec/org" {
+			t.Errorf("key directory %s planned as a zone directory", d)
+		}
+	}
+	if !slices.Contains(p.Read, "/var/named/keys/Kexample.com.+013+1.key") {
+		t.Errorf("the $INCLUDEd public key lost its read access: %v", p.Read)
+	}
+	// A zone directory that is also a key-directory: rx, no default ACL.
+	if !slices.Contains(p.Dirs, "/srv/zones") || !slices.Contains(p.NoDefault, "/srv/zones") {
+		t.Errorf("dirs %v no-default %v", p.Dirs, p.NoDefault)
+	}
+	for _, k := range []string{"/var/named/keys/Kexample.com.+013+1.private", "/srv/zones/Kexample.net.+013+2.private", "/etc/dnssec/org/Kexample.org.+013+3.private"} {
+		if !slices.Contains(p.Strip, k) {
+			t.Errorf("%s not stripped: %v", k, p.Strip)
+		}
+	}
+	for _, c := range p.Commands() {
+		for _, a := range c {
+			if strings.HasPrefix(a, "/etc/dnssec") || strings.HasSuffix(a, ".private") {
+				t.Errorf("setfacl on %s: %q", a, c)
+			}
+		}
 	}
 }

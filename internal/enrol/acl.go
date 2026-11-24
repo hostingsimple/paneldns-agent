@@ -27,9 +27,16 @@ type ACLPlan struct {
 	// ACL, which a key file created there later would inherit (review A-7).
 	// fix-acls removes an agent default entry an older version left on them.
 	NoDefault []string
-	// Strip are key files in planned directories, and the Skipped files:
-	// fix-acls removes any entry the agent has on them (an inherited one).
-	Strip    []string
+	// Strip are key files in planned directories and in the DNSSEC key
+	// directories, and the Skipped files: fix-acls removes any entry the
+	// agent has on them (an inherited one).
+	Strip []string
+	// KeyDirs are named.conf's key-directory folders. They never get rx or
+	// a default ACL: one that is also a zone directory is in NoDefault, any
+	// other is not in Dirs at all (only x, in Traverse, when the agent must
+	// pass through it), and fix-acls removes the agent's default entry, and
+	// its access entry unless it is in Traverse.
+	KeyDirs  []string
 	Warnings []string
 
 	// ids is what each Read, Dirs and Traverse path reached when the plan
@@ -98,6 +105,7 @@ func PlanACLs(cfg config.Config) (*ACLPlan, error) {
 	// Directories that hold named's configuration (named.conf and its
 	// includes): key files are kept, and created, next to it.
 	confDirs := map[string]bool{}
+	var keyDirs []string
 	if cfg.ZoneSource == config.SourceBIND {
 		l := &namedconf.Loader{ReadFile: readRooted, Glob: globRooted, Chroot: cfg.Chroot}
 		conf, err := namedconf.Read(l, cfg.ZonesFile, cfg.View)
@@ -152,6 +160,19 @@ func PlanACLs(cfg config.Config) (*ACLPlan, error) {
 				dirs[path.Dir(f)] = true
 			}
 		}
+		// A DNSSEC key directory is never listable by the agent: unless
+		// zone files live in it too, it leaves Dirs (a public K*.key file
+		// $INCLUDEd from it still gets read access, and the folder x).
+		keyDirs = conf.KeyDirs
+		zoneDirs := map[string]bool{}
+		for _, z := range conf.Zones {
+			zoneDirs[path.Dir(z.File)] = true
+		}
+		for _, kd := range keyDirs {
+			if !zoneDirs[kd] {
+				delete(dirs, kd)
+			}
+		}
 	}
 	if cfg.OwnersFile != "" {
 		if _, err := statFunc(rooted(cfg.OwnersFile)); err == nil {
@@ -180,6 +201,7 @@ func PlanACLs(cfg config.Config) (*ACLPlan, error) {
 	p.Read = sortedKeys(read)
 	p.Dirs = sortedKeys(dirs)
 	p.Traverse = sortedKeys(traverse)
+	p.KeyDirs = keyDirs
 	p.planKeyDirs(cfg.Chroot, confDirs, read)
 	return p, nil
 }
@@ -193,6 +215,9 @@ func PlanACLs(cfg config.Config) (*ACLPlan, error) {
 // there get their ACL from the root watcher (fix-acls) instead.
 func (p *ACLPlan) planKeyDirs(chroot string, confDirs, read map[string]bool) {
 	keyDirs := map[string]bool{}
+	for _, d := range p.KeyDirs {
+		keyDirs[d] = true
+	}
 	for k := range keyPaths {
 		keyDirs[path.Dir(k)] = true
 		if chroot != "" {
@@ -202,6 +227,17 @@ func (p *ACLPlan) planKeyDirs(chroot string, confDirs, read map[string]bool) {
 	strip := map[string]bool{}
 	for _, s := range p.Skipped {
 		strip[s] = true
+	}
+	for _, d := range p.KeyDirs {
+		keys, err := keyFilesIn(d)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			p.Warnings = append(p.Warnings, fmt.Sprintf("key-directory %s: listing it: %v", d, err))
+		}
+		for _, k := range keys {
+			if !read[k] {
+				strip[k] = true
+			}
+		}
 	}
 	var noDefault []string
 	for _, d := range p.Dirs {

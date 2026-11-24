@@ -178,6 +178,18 @@ linking into `/var/named/run-root` or `/var/named/chroot`) → BIND with `CHROOT
 `pdns-api-key` (0600). A hashed PowerDNS API key can't be copied, so enrol stops and says what
 to do. The Plesk chroot detection is unverified until tried on a Plesk server.
 
+**Reading pdns.conf as PowerDNS does** (`ArgvMap::parseFile` and `mustDo` in PowerDNS's
+`arguments.cc`). A line ending in `\` continues on the next; a `#` at the start of a line or after
+white space starts a comment (`api=yes  # on` is `yes`; `api=no#x` keeps the `#`); a line without
+`=` is a bare key with an empty value; key and value are trimmed. A boolean is off only when it is
+exactly `no` or `off`; everything else, a bare key included, is on. Enrol takes `yes`, `true`, `1`,
+`on` (any case) and the bare key as on, and `no` and `off` as off. **Decision:** `false`, `0`,
+`No`, `OFF` and any other value are refused, with a message saying PowerDNS reads it as on.
+PowerDNS does run its API with `api=false`, so treating it as off would be wrong; but whoever wrote
+it meant off, and enrol is about to copy a read-write API key, so it asks for an unambiguous
+`api=yes` (or `api=no`) instead of guessing either way. The refusal says whether `api` was missing
+(PowerDNS's default is off) or set to off.
+
 ## D-19 Key rotation (8.1)
 
 On `rotate_key: true` the agent writes the new key to `agent.key.next`, calls `/rotate` signed
@@ -319,8 +331,18 @@ from the root watcher (D-30) instead of by inheritance. `fix-acls` also removes,
 `setfacl -n` (no mask recalculation, so no other entry widens), the agent's default entry that an
 older version left on such a directory, and any agent entry on key files in planned directories
 and on the key-only includes the plan skips. The plan warns about a key file others can read: no
-ACL takes away what the mode gives everyone. Not covered: a DNSSEC `key-directory` that is not a
-zone directory is not planned at all; a key created in a zone-only directory inherits the entry
+ACL takes away what the mode gives everyone.
+
+**DNSSEC key directories.** The plan reads every `key-directory` in named.conf (in `options`, any
+view and any zone, whichever view is read; relative ones against named's `directory`, inside the
+chroot). Such a folder never gets `rx` or a default ACL: when zone files live in it too it is a
+zone directory without the default (above); otherwise it is left out of the zone directories even
+when a zone `$INCLUDE`s a public `K*.key` from it (that file is still readable, and the folder gets
+`x` only if the agent must pass through it). Key files in it are stripped of any agent entry, and
+`fix-acls` removes the agent's default entry from the folder, and its access entry unless the
+agent must pass through. Not covered: keys kept in named's working directory, the default when no
+`key-directory` is set, are found only by name, as in any zone directory; a `key-store` directory
+(BIND 9.20 `dnssec-policy`) is not read. A key created in a zone-only directory inherits the entry
 until the watcher's next run strips it (named writes `K*.private` 0600, so that entry is masked).
 
 **Inline keys are refused** (owner decision, 2026-11-20; it replaced a warning). A `key` (or
