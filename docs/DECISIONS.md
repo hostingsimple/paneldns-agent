@@ -475,9 +475,10 @@ GoReleaser (nfpm) builds `.deb` and `.rpm` for amd64 and arm64. Each installs `/
 0640 `root:paneldns-agent`, kept on upgrade), `/var/lib/paneldns-agent` (0700) and the licence
 files. The packages recommend `acl` (for `setfacl`), and the `.rpm` depends on `shadow-utils`.
 The maintainer scripts only create the system user and group, fix the two modes, run
-`systemctl daemon-reload`, restart the unit on upgrade if it is enabled, and stop and disable it
-on removal. They never enable it on a first install (enrol does that), and they make no network
-call. `dpkg --purge` removes the state directory and leaves the user. File times come from the
+`paneldns-agent update-units` on an enrolled server (D-21) and `systemctl daemon-reload`, restart
+the unit on upgrade if it is enabled, and stop and disable it, and delete the drop-ins enrol
+wrote, on removal. They never enable it on a first install (enrol does that) and download
+nothing; `update-units` only resolves the PanelDNS host name. `dpkg --purge` removes the state directory and leaves the user. File times come from the
 commit, so packages and tarballs are reproducible. The package maintainer field is
 `HostingSimple` until the owner names a contact address. `packaging/gpg.key` is the public half of
 the release signing key (ed25519, fingerprint `AAE3B3B1258CAAB0ED1AE1C3697D46A632CB9283`,
