@@ -6,6 +6,64 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-11-24
+
+Security review 2026-11, the remaining agent findings.
+
+### Security
+
+- Enrol and `fix-acls` (both root) no longer hand `setfacl` a path that can change under them.
+  The plan notes the object each path reaches, walking from `/` without following any symbolic
+  link; when the ACL is set, the path is walked again the same way and must reach that same
+  object, and `setfacl` gets the open descriptor (`/proc/self/fd/N`), not the path. A user who
+  can write a directory on the path (a HestiaCP home directory, a `named`-writable zone directory)
+  could swap a component for a link between the plan and `setfacl` and so have root grant the
+  agent read access to any file (review A-3, residual of 0.1.4's fix). A path that changed stops
+  enrol and is reported by `fix-acls`; a file with several hard links in such a directory is
+  refused too.
+- The service's unit now also denies link-local (cloud metadata services), multicast, RFC 1918,
+  shared (RFC 6598) and IPv6 unique local addresses, not only loopback (review A-11), and hides
+  home directories (`ProtectHome=yes`) instead of making them read-only on every server (review
+  A-12). Enrol writes the exceptions this server needs into drop-ins: `IPAddressAllow=` for the
+  PowerDNS API, the resolvers in `/etc/resolv.conf` and PanelDNS's own addresses when they fall
+  in a denied range, and `ProtectHome=read-only` only when zone data lives under `/home`
+  (HestiaCP), also through a symbolic link. The ACL watcher's home rule now follows links too.
+
+- `named`, `named-compilezone`, `setfacl` and `systemctl` are run by absolute path, found in
+  `/usr/sbin`, `/usr/bin`, `/sbin`, `/bin`, `/usr/local/sbin` or `/usr/local/bin` (in that order)
+  and only when root owns the file and its directory and nobody else can write them; `$PATH` is
+  never used. Enrol and `fix-acls` run as root, so a `PATH` set by the caller, or a writable
+  directory early in it, chose the binary root ran (review A-13).
+
+### Added
+
+- `paneldns-agent update-units` (root) rewrites this server's unit drop-ins (the agent's and the
+  ACL watcher's). The package runs it on upgrade before restarting the agent, so a server
+  enrolled with 0.1.4 or earlier gets its exceptions before the stricter unit starts; `fix-acls`
+  run by hand does it too. `--check` warns when the drop-ins are out of date (a resolver that
+  moved). Removing the package now also deletes the agent's own drop-ins.
+
+### Fixed
+
+- A key rotation whose answer was lost (a timeout, a proxy error, a crash or restart right
+  after `/rotate`) no longer locks the agent out a day later. PanelDNS may already have switched
+  to the new key, accepting the old one for 24 hours only, but the agent threw the new key away
+  (also at every start), so the server had to be enrolled again (review A-15). The agent now
+  drops the new key only when PanelDNS refuses the rotation outright; otherwise it keeps both,
+  goes on with the old one, and before its next requests asks again and, if needed, checks
+  whether PanelDNS accepts the new key, then keeps whichever key PanelDNS holds. A switch
+  interrupted by a crash is finished at the next start. Works with the released PanelDNS; no
+  server change.
+- Enrol reads `pdns.conf` as PowerDNS does: a `#` after white space starts a comment, so
+  `api=yes  # on` is on (it was refused), and a line ending in `\` continues on the next.
+  Booleans follow PowerDNS's `mustDo`: only `no` and `off` are off. `false`, `0` and other values
+  PowerDNS also reads as on are now refused with that explanation rather than taken as off; write
+  `api=yes`. The refusal says whether `api` was missing or set to off.
+- The ACL plan reads named.conf's `key-directory` (options, views, zones). A DNSSEC key folder
+  outside the zone directories was not known to the plan; now no key folder gets `rx` or a
+  default ACL, even when a zone `$INCLUDE`s a public key from it, and `fix-acls` removes any agent
+  entry from the folder and its key files.
+
 ## [0.1.4] - 2026-11-24
 
 Security review 2026-11 (agent findings A-1 to A-10; A-3 for planted links only).

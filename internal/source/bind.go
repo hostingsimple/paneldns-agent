@@ -20,6 +20,7 @@ import (
 
 	"github.com/hostingsimple/paneldns-agent/internal/config"
 	"github.com/hostingsimple/paneldns-agent/internal/namedconf"
+	"github.com/hostingsimple/paneldns-agent/internal/syspath"
 	"github.com/hostingsimple/paneldns-agent/internal/zonefile"
 )
 
@@ -220,13 +221,9 @@ func (b *BIND) CompilezonePath() string {
 	if b.Compilezone != "" {
 		return b.Compilezone
 	}
-	if p, err := exec.LookPath("named-compilezone"); err == nil {
+	// The system directories only, never $PATH (review A-13).
+	if p, err := syspath.Find("named-compilezone"); err == nil {
 		return p
-	}
-	for _, p := range []string{"/usr/sbin/named-compilezone", "/usr/bin/named-compilezone", "/usr/local/sbin/named-compilezone", "/usr/local/bin/named-compilezone"} {
-		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
-			return p
-		}
 	}
 	return ""
 }
@@ -522,8 +519,11 @@ func (b *BIND) Running(ctx context.Context) (Running, string) {
 func systemdActive(ctx context.Context, unit string) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "systemctl", "is-active", "--quiet", unit)
-	err := cmd.Run()
+	cmd, err := syspath.CommandContext(ctx, "systemctl", "is-active", "--quiet", unit)
+	if err != nil {
+		return false, err
+	}
+	err = cmd.Run()
 	if err == nil {
 		return true, nil
 	}

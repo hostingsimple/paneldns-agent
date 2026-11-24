@@ -2,6 +2,7 @@ package enrol
 
 import (
 	"path"
+	"path/filepath"
 	"strings"
 )
 
@@ -81,14 +82,41 @@ func PlanWatch(p *ACLPlan) WatchList {
 	w.Watch = sortedKeys(watch)
 	w.Writable = sortedKeys(writable)
 	w.Rejected = sortedKeys(rejected)
-	for _, s := range append(append([]string{}, w.Watch...), w.Writable...) {
-		for _, h := range []string{"/home", "/root", "/run/user"} {
+	w.ProtectHomeReadOnly = UnderHome(append(append([]string{}, w.Watch...), w.Writable...))
+	return w
+}
+
+// homeDirs are what systemd's ProtectHome= hides or makes read-only.
+var homeDirs = []string{"/home", "/root", "/run/user"}
+
+// UnderHome reports whether any of paths (host paths) is under a home
+// directory, as named or once symbolic links are resolved: a unit with
+// ProtectHome=yes can't reach it (HestiaCP keeps zones in home
+// directories; a server may have /var/named linked into /home).
+func UnderHome(paths []string) bool {
+	under := func(s string) bool {
+		for _, h := range homeDirs {
 			if s == h || strings.HasPrefix(s, h+"/") {
-				w.ProtectHomeReadOnly = true
+				return true
+			}
+		}
+		return false
+	}
+	for _, p := range paths {
+		if under(p) {
+			return true
+		}
+		if real, err := filepath.EvalSymlinks(rooted(p)); err == nil {
+			real = filepath.ToSlash(real)
+			if Root != "" {
+				real = strings.TrimPrefix(real, filepath.ToSlash(filepath.Clean(Root)))
+			}
+			if under(real) {
+				return true
 			}
 		}
 	}
-	return w
+	return false
 }
 
 // unitSafe reports whether a path can go into a unit file as it is.

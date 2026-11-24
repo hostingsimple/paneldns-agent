@@ -39,6 +39,10 @@ type Conf struct {
 	PidFile string
 	// InlineKeys are key statements in files the agent reads.
 	InlineKeys []KeyRef
+	// KeyDirs are the DNSSEC key directories named.conf sets with
+	// key-directory (options, any view, any zone), as host paths, sorted.
+	// named's working directory, the default, is not listed.
+	KeyDirs []string
 }
 
 // Read loads named.conf at hostPath and resolves the zones of view (""
@@ -191,7 +195,41 @@ func Resolve(stmts []*Stmt, l *Loader, hostPath, wantView string) (*Conf, error)
 	for k := range c.OtherViews {
 		sort.Strings(c.OtherViews[k])
 	}
+	c.KeyDirs = keyDirectories(stmts, optBlock, l, c.Directory)
 	return c, nil
+}
+
+// keyDirectories collects every key-directory: in options, in each view,
+// and in each zone at top level or in a view, whichever view is read (the
+// ACL plan must keep all of them from the agent).
+func keyDirectories(stmts, optBlock []*Stmt, l *Loader, dir string) []string {
+	seen := map[string]bool{}
+	add := func(block []*Stmt) {
+		if d := argOf(block, "key-directory"); d != "" {
+			seen[path.Clean(l.HostPath(d, dir))] = true
+		}
+	}
+	add(optBlock)
+	zones := func(block []*Stmt) {
+		for _, s := range block {
+			if s.Name() == "zone" && s.HasBlock {
+				add(s.Block)
+			}
+		}
+	}
+	zones(stmts)
+	for _, s := range stmts {
+		if s.Name() == "view" && s.HasBlock {
+			add(s.Block)
+			zones(s.Block)
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for d := range seen {
+		out = append(out, d)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // NormalizeName lower-cases a zone name and drops the trailing dot (the

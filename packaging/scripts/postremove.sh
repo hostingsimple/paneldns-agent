@@ -1,7 +1,7 @@
 #!/bin/sh
 # paneldns-agent postremove (deb postrm, rpm %postun).
-# On removal, deletes the ACL watcher's drop-ins that enrol wrote (they list
-# this server's zone directories). Reloads systemd. `dpkg --purge` also
+# On removal, deletes the drop-ins that enrol wrote for the agent and the ACL
+# watcher (they list this server's zone directories and addresses). Reloads systemd. `dpkg --purge` also
 # removes the state directory (the agent's key, so the server must be
 # re-enrolled after a reinstall); the user is left in place, as Debian
 # policy recommends.
@@ -14,6 +14,9 @@ case "${1:-}" in
 			rm -f "$d/watch.conf"
 			rmdir "$d" 2>/dev/null || true
 		done
+		d=/etc/systemd/system/paneldns-agent.service.d
+		rm -f "$d/10-paneldns-network.conf" "$d/20-paneldns-home.conf"
+		rmdir "$d" 2>/dev/null || true
 		;;
 esac
 if [ -d /run/systemd/system ]; then

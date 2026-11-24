@@ -12,7 +12,8 @@ configuration or panel data, and never downloads or replaces code.
 This repository is public so that a hosting company can read exactly what it installs, rebuild it
 and compare the result with the published packages.
 
-> Status: pre-release (0.1.0-dev); no release has been published yet.
+> Status: released. Signed packages are published at `https://packages.paneldns.com`; the
+> versions and what changed in each are in [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Install
 
@@ -68,12 +69,15 @@ including the canonical zone text and content hash, in [`docs/PROTOCOL.md`](docs
 - HTTPS only, certificate always verified. PanelDNS also refuses requests from addresses that
   are not on the server's IP allowlist; the agent says so plainly in its log and in `--check`.
 - The service runs as the `paneldns-agent` user with no capabilities, `NoNewPrivileges`,
-  `ProtectSystem=strict` (only `/var/lib/paneldns-agent` is writable), `ProtectHome=read-only`, a
-  `@system-service` seccomp filter, no access to loopback addresses (so not to rndc), the rndc
-  key and `pdns.conf` made inaccessible, and `MemoryMax=128M`; see
-  [`packaging/systemd/paneldns-agent.service`](packaging/systemd/paneldns-agent.service). When
-  the PowerDNS API or the system resolver is on a loopback address, enrol adds a drop-in with
-  `IPAddressAllow=` for exactly those addresses.
+  `ProtectSystem=strict` (only `/var/lib/paneldns-agent` is writable), `ProtectHome=yes`, a
+  `@system-service` seccomp filter, no access to loopback (so not to rndc), link-local (cloud
+  metadata), multicast or private and shared address ranges, the rndc key and `pdns.conf` made
+  inaccessible, and `MemoryMax=128M`; see
+  [`packaging/systemd/paneldns-agent.service`](packaging/systemd/paneldns-agent.service). Enrol
+  adds a drop-in with `IPAddressAllow=` for exactly the addresses in those ranges this server
+  needs (the PowerDNS API, its resolvers, PanelDNS itself), and one with `ProtectHome=read-only`
+  only where zone data lives under `/home` (HestiaCP); package upgrades rewrite both
+  (`paneldns-agent update-units`).
 - The agent itself never runs as root. The one root piece is the ACL watcher's oneshot
   `paneldns-agent-acl.service` (`fix-acls`): it only adds the agent's read entry and the read bit
   of the mask on the files and directories enrol planned, never on key files, never lowering a

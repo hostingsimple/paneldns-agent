@@ -143,6 +143,10 @@ type Env struct {
 	// WatchDropIn is the ACL watcher's drop-in; ReadFile reads it.
 	WatchDropIn string
 	ReadFile    func(string) ([]byte, error)
+	// UnitDropIns returns the agent unit's drop-ins that differ from what
+	// `update-units` would write for these zone paths (resolvers or zone
+	// locations changed since enrol); nil skips the check.
+	UnitDropIns func(zonePaths []string) []string
 	Zone        string // --zone
 	Sample      int    // zones read and parsed (default 5)
 	Now         func() time.Time
@@ -169,6 +173,7 @@ func Run(ctx context.Context, env Env) *Result {
 	checkConfig(r, env)
 	listing := checkBackend(ctx, r, env, cfg)
 	checkACLWatcher(r, env, listing)
+	checkUnitDropIns(r, env, cfg, listing)
 	checkOwners(r, env, listing)
 	checkLastRun(r, env)
 	checkServer(ctx, r, env, cfg, listing)
@@ -357,6 +362,28 @@ func checkACLWatcher(r *Result, env Env, listing *source.Listing) {
 	}
 }
 
+// checkUnitDropIns warns when the agent unit's drop-ins are out of date:
+// --check runs outside the unit, so it can read what the service can't
+// when a resolver moved into a denied range or zones live under /home.
+func checkUnitDropIns(r *Result, env Env, cfg config.Config, listing *source.Listing) {
+	if env.UnitDropIns == nil {
+		return
+	}
+	var paths []string
+	if b, ok := env.Source.(*source.BIND); ok && listing != nil {
+		paths = append(paths, cfg.ZonesFile, listing.Directory)
+		for _, z := range listing.Zones {
+			paths = append(paths, b.ZoneFile(z))
+		}
+	}
+	if cfg.OwnersFile != "" {
+		paths = append(paths, cfg.OwnersFile)
+	}
+	if stale := env.UnitDropIns(paths); len(stale) > 0 {
+		r.add("config", Warn, "unit drop-ins out of date for this server (resolvers, PanelDNS address or zone locations changed): %s; as root run: paneldns-agent update-units && systemctl restart paneldns-agent", strings.Join(stale, ", "))
+	}
+}
+
 func limitList(s []string, n int) string {
 	if len(s) <= n {
 		return strings.Join(s, "; ")
@@ -458,7 +485,7 @@ func checkServer(ctx context.Context, r *Result, env Env, cfg config.Config, lis
 	u, _ := url.Parse(cfg.URL)
 	if env.Lookup != nil && u != nil {
 		if err := env.Lookup(ctx, u.Hostname()); err != nil {
-			r.add("panel sync", Fail, "can't resolve %s: %v (if /etc/resolv.conf uses a loopback resolver, the unit needs IPAddressAllow= for it; enrol writes that drop-in)", u.Hostname(), err)
+			r.add("panel sync", Fail, "can't resolve %s: %v (if /etc/resolv.conf names a loopback, link-local or private resolver, the unit needs IPAddressAllow= for it: as root run paneldns-agent update-units)", u.Hostname(), err)
 			return
 		}
 	}

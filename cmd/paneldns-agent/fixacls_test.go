@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"errors"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -31,6 +33,11 @@ func withUnits(t *testing.T) (calls *[]string) {
 	oldP, oldS, oldU, oldR := aclPathDropIn, aclServiceDropIn, unitsSupported, runSystemctl
 	aclPathDropIn = filepath.Join(dir, "paneldns-agent-acl.path.d", "watch.conf")
 	aclServiceDropIn = filepath.Join(dir, "paneldns-agent-acl.service.d", "watch.conf")
+	oldN, oldH, oldL := agentNetDropIn, agentHomeDropIn, lookupHost
+	agentNetDropIn = filepath.Join(dir, "paneldns-agent.service.d", "10-paneldns-network.conf")
+	agentHomeDropIn = filepath.Join(dir, "paneldns-agent.service.d", "20-paneldns-home.conf")
+	lookupHost = func(string) ([]netip.Addr, error) { return nil, errors.New("no lookups in tests") }
+	t.Cleanup(func() { agentNetDropIn, agentHomeDropIn, lookupHost = oldN, oldH, oldL })
 	unitsSupported = true
 	calls = &[]string{}
 	runSystemctl = func(args ...string) ([]byte, error) {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/hostingsimple/paneldns-agent/internal/check"
 	"github.com/hostingsimple/paneldns-agent/internal/config"
+	"github.com/hostingsimple/paneldns-agent/internal/enrol"
 	"github.com/hostingsimple/paneldns-agent/internal/host"
 	"github.com/hostingsimple/paneldns-agent/internal/owners"
 	"github.com/hostingsimple/paneldns-agent/internal/protocol"
@@ -64,6 +65,18 @@ func buildCheckEnv(configPath, stateDir string) check.Env {
 		return env
 	}
 	env.Config = &cfg
+	if unitsSupported {
+		env.UnitDropIns = func(zonePaths []string) []string {
+			home := enrol.UnderHome(zonePaths)
+			want := agentDropIns(networkAllow(cfg), home)
+			if !home {
+				// Only the zones are known here, not every planned path
+				// ($INCLUDE files): a home drop-in may still be needed.
+				delete(want, agentHomeDropIn)
+			}
+			return staleDropIns(want)
+		}
+	}
 	if src, err := newSource(cfg); err == nil {
 		env.Source = src
 	}

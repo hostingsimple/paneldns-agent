@@ -5,9 +5,13 @@
 # PanelDNS over HTTPS. It writes only to /var/lib/paneldns-agent, opens no
 # listening socket, and runs with no capabilities.
 #
-# Local additions (written by enrol when needed) go in
-# /etc/systemd/system/paneldns-agent.service.d/: an IPAddressAllow= for the
-# PowerDNS API address or a resolver on a loopback address. Spec 7.9.
+# Local additions (written by enrol, `paneldns-agent update-units` and
+# `fix-acls` run by hand, when needed) go in
+# /etc/systemd/system/paneldns-agent.service.d/: 10-paneldns-network.conf
+# with IPAddressAllow= for the addresses in a denied range this server needs
+# (the PowerDNS API, the resolvers in /etc/resolv.conf, PanelDNS itself),
+# and 20-paneldns-home.conf with ProtectHome=read-only where zone data lives
+# under /home (HestiaCP). Spec 7.9; docs/DECISIONS.md D-21.
 
 [Unit]
 Description=PanelDNS agent (Panel Sync)
@@ -26,10 +30,11 @@ User=paneldns-agent
 Group=paneldns-agent
 UMask=0077
 
-# Filesystem: everything read-only except the state directory. /home stays
-# readable because HestiaCP keeps zone files under home directories.
+# Filesystem: everything read-only except the state directory. Home
+# directories are hidden; on a server whose zone data lives under /home
+# (HestiaCP) the drop-in makes them read-only instead.
 ProtectSystem=strict
-ProtectHome=read-only
+ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
 ReadWritePaths=/var/lib/paneldns-agent
@@ -62,11 +67,14 @@ SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
 
-# Network: outbound only. No loopback, so the agent can't reach rndc on
-# 127.0.0.1:953; enrol adds IPAddressAllow= in a drop-in for the PowerDNS
-# API or a loopback resolver when this server needs one.
+# Network: outbound only, to PanelDNS over HTTPS. No loopback, so the agent
+# can't reach rndc on 127.0.0.1:953; no link-local (cloud metadata services
+# such as 169.254.169.254), multicast, or private and shared address ranges
+# (the LAN, RFC 1918, RFC 6598, IPv6 ULA). The drop-in allows back exactly
+# the addresses in those ranges this server needs: the PowerDNS API (always
+# loopback), its resolvers, and PanelDNS if its name resolves there.
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
-IPAddressDeny=localhost
+IPAddressDeny=localhost link-local multicast 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 fc00::/7
 
 # Resources (spec 7.8): named-compilezone runs as a child, so it inherits
 # the low CPU and idle I/O priority set here.

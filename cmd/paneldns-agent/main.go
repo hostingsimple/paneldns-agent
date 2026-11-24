@@ -19,6 +19,7 @@ Usage:
   paneldns-agent --check   [--config FILE] [--zone NAME] [--json]
   paneldns-agent enrol     --url URL --code - [--config FILE] [--no-acl] [--no-start]
   paneldns-agent fix-acls  [--config FILE]   (root) restore the agent's read ACLs
+  paneldns-agent update-units [--config FILE] (root) rewrite this server's unit drop-ins
   paneldns-agent version
 
 --code - reads the enrolment code from standard input
@@ -51,6 +52,8 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 		return cmdEnrol(args[1:], stdout, stderr)
 	case "fix-acls":
 		return cmdFixACLs(args[1:], stdout, stderr)
+	case "update-units":
+		return cmdUpdateUnits(args[1:], stdout, stderr)
 	case "version", "--version", "-v":
 		fmt.Fprintln(stdout, version.Version)
 		return 0

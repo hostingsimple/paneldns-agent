@@ -164,7 +164,11 @@ The key pair is generated on the server with `crypto/rand` and stored as PKCS #8
 Enrolment writes nothing until PanelDNS has accepted the code; then it writes the key,
 `identity.json`, `sequence.json` (the epoch from the answer) and an empty `state.json`, so the
 first run sends a full inventory without an extra `/epoch` call. A re-enrol replaces all four.
-The enrolment code may be given as `--code` or in `PANELDNS_ENROL_CODE`.
+The enrolment code is read from standard input with `--code -` (since 0.1.4, security review
+A-2: `paneldns-agent enrol --url URL --code - <<< 'CODE'`; `install.sh --code -` likewise), or
+from `PANELDNS_ENROL_CODE`. `--code CODE` still works but warns: a code on the command line is
+visible to every local user in `/proc/PID/cmdline` while enrol runs, and whoever sends it first
+enrols their own key.
 
 ## D-18 Zone source detection at enrolment (7.1, 7.3)
 
@@ -178,12 +182,48 @@ linking into `/var/named/run-root` or `/var/named/chroot`) → BIND with `CHROOT
 `pdns-api-key` (0600). A hashed PowerDNS API key can't be copied, so enrol stops and says what
 to do. The Plesk chroot detection is unverified until tried on a Plesk server.
 
+**Reading pdns.conf as PowerDNS does** (`ArgvMap::parseFile` and `mustDo` in PowerDNS's
+`arguments.cc`). A line ending in `\` continues on the next; a `#` at the start of a line or after
+white space starts a comment (`api=yes  # on` is `yes`; `api=no#x` keeps the `#`); a line without
+`=` is a bare key with an empty value; key and value are trimmed. A boolean is off only when it is
+exactly `no` or `off`; everything else, a bare key included, is on. Enrol takes `yes`, `true`, `1`,
+`on` (any case) and the bare key as on, and `no` and `off` as off. **Decision:** `false`, `0`,
+`No`, `OFF` and any other value are refused, with a message saying PowerDNS reads it as on.
+PowerDNS does run its API with `api=false`, so treating it as off would be wrong; but whoever wrote
+it meant off, and enrol is about to copy a read-write API key, so it asks for an unambiguous
+`api=yes` (or `api=no`) instead of guessing either way. The refusal says whether `api` was missing
+(PowerDNS's default is off) or set to off.
+
 ## D-19 Key rotation (8.1)
 
 On `rotate_key: true` the agent writes the new key to `agent.key.next`, calls `/rotate` signed
-with the old key, and only then renames the new key over `agent.key` and stores the new key id.
-If the agent dies in between, the old key still works (spec: until the new one is used once, or
-24 hours) and the server asks again; a stale `agent.key.next` is removed at start.
+with the old key, and on the answer switches: the new key id goes into `identity.json` as
+`next_key_id`, the new key is renamed over `agent.key`, then the key id becomes the current one.
+A start that finds `next_key_id` finishes that switch.
+
+**A lost answer** (security review A-15). Up to 0.1.4 a failed `/rotate` removed the new key, and so
+did every start. But PanelDNS may have registered the key before the answer was lost (a timeout, a
+proxy's 502, a crash or restart in between): it then accepts the old key for 24 hours only and
+never asks again (`rotate_requested_at` is cleared), so the server had to be enrolled again. Now
+the agent drops the new key only on a 4xx refusal, which PanelDNS sends without registering
+anything. Otherwise it keeps both keys, goes on signing with the old one, and at the start of
+each cycle, before any other request:
+
+1. sends `/rotate` again with the same new key, signed with the old key; if PanelDNS still wants
+   a rotation it registers the key now and answers with its id;
+2. on 409 `rotation_not_requested`, 400 (the key is already the current one) or 401 (the old key
+   stopped working), signs a `/rotate` with the new key under the key id PanelDNS gives a rotated
+   key (the old id plus one). PanelDNS checks the signature before anything about the request
+   (order S-05 of its protocol notes), so any answer it gives only after that check (2xx, 400,
+   409, 426) shows it holds the new key: the agent switches to it. 401 shows it never registered
+   it: the agent drops it and keeps the old key.
+
+Other answers (403, 429, 5xx, no answer) leave both keys in place for the next cycle. This needs no
+PanelDNS change. It does lean on two things PanelDNS does but `PROTOCOL.md` leaves open: key ids
+are decimal and a rotation adds one, and the order of its checks. If key ids weren't numbers the
+agent can't check, drops the new key and logs that the server may need enrolling again. A
+`/rotate` that answered a repeated public key with its existing key id would make step 2
+unnecessary.
 
 ## D-20 Owner files (7.3, 18.4 item 4)
 
@@ -195,16 +235,42 @@ skipped. A later line wins. The file is re-read only when its size or mtime chan
 picks the file from the detected panel (cPanel, DirectAdmin); other panels send no owner in
 v1. Both formats remain unverified against the owner's servers until prototype P1.
 
-## D-21 Loopback access and the unit drop-in (7.9)
+## D-21 Denied addresses, home directories and the unit drop-ins (7.9)
 
-The unit has `IPAddressDeny=localhost`, so the agent can't reach rndc on 127.0.0.1:953. Spec
-7.9 allows `IPAddressAllow=` for the PowerDNS API address. A second case the spec doesn't
-mention: if `/etc/resolv.conf` points at a loopback resolver (systemd-resolved's `127.0.0.53`,
-or a local named at `127.0.0.1`, common on cPanel servers), the agent could not resolve the
-PanelDNS host name at all. Enrol therefore writes
-`/etc/systemd/system/paneldns-agent.service.d/10-paneldns-network.conf` with
-`IPAddressAllow=` for the PowerDNS API host and any loopback nameserver, and removes it when
-neither applies. `IPAddressAllow=` can't name a port, so on a server whose resolver is a local
+The unit has `IPAddressDeny=localhost link-local multicast 10.0.0.0/8 172.16.0.0/12
+192.168.0.0/16 100.64.0.0/10 fc00::/7` (security review A-11; 0.1.4 denied `localhost` only), so
+the agent can't reach rndc on 127.0.0.1:953, a cloud metadata service on 169.254.169.254, or
+anything else on the LAN. The agent needs outbound HTTPS to PanelDNS, name resolution, and the
+PowerDNS API, which is always on loopback (spec 7.2: `PDNS_API_URL` must be a loopback address;
+enrol refuses a PowerDNS whose API listens on a LAN address only, and reaches one on `0.0.0.0` at
+127.0.0.1). Spec 7.9 allows `IPAddressAllow=` for the PowerDNS API address. The other legitimate
+needs are the resolvers in `/etc/resolv.conf` (systemd-resolved's `127.0.0.53`, a local named on
+`127.0.0.1` as on many cPanel servers, a cloud's link-local or VPC resolver such as AWS's
+`169.254.169.253` or `10.x.0.2`, Alibaba's `100.100.2.136`, a LAN resolver), and PanelDNS itself
+when its name resolves into a denied range (a PanelDNS on the same LAN). Enrol therefore writes
+`/etc/systemd/system/paneldns-agent.service.d/10-paneldns-network.conf` with `IPAddressAllow=`
+for each of those addresses that falls in a denied range, and removes it when none does. The
+addresses are worked out once, as root; a resolver that changes later (a new DHCP lease on a LAN)
+stays blocked until the drop-in is rewritten, which `--check` reports.
+
+**Home directories** (review A-12). The unit has `ProtectHome=yes`. 0.1.4 had `read-only` on every
+server only because HestiaCP keeps zone files under `/home/<user>/conf/dns`. Enrol writes
+`20-paneldns-home.conf` with `ProtectHome=read-only` when a path the ACL plan grants (named.conf,
+includes, zone files, `$INCLUDE`d files, the owner file, zone directories and traversed parents)
+is under `/home`, `/root` or `/run/user`, as named or with symbolic links resolved (a `/var/named`
+linked into `/home`). The ACL watcher's drop-in uses the same rule. The other supported panels
+(cPanel, DirectAdmin, Plesk, ISPConfig, Virtualmin, and PowerDNS servers) keep zone data under
+`/var` or `/etc`, so they get `yes`.
+
+**Keeping the drop-ins current.** `paneldns-agent update-units` (root) rewrites both drop-ins, and
+the ACL watcher's, from the config and the ACL plan. The package runs it on upgrade, on an
+enrolled server, before restarting the agent, with `--offline` (no network in maintainer scripts,
+spec 7.1: PanelDNS's name is not resolved and every address the drop-in already allows is kept), so an upgrade that denies more can't cut off a
+server enrolled with an older version (its LAN resolver, or HestiaCP zones). `fix-acls` run by
+hand does the same. `--check`, which runs outside the unit, compares the drop-ins with what
+`update-units` would write and warns when they differ.
+
+`IPAddressAllow=` can't name a port, so on a server whose resolver is a local
 named on `127.0.0.1` the agent can reach `127.0.0.1:953` too; it still can't use rndc, because it
 can't read the rndc key (ACLs plus `InaccessiblePaths=`). `--check` reports a failed lookup of
 the PanelDNS host with this hint.
@@ -230,8 +296,22 @@ links root owns and sit in directories only root can change (owned by root and n
 group or others, or sticky), and whose target is not key material; Plesk's `/etc/named.conf`
 link into its chroot qualifies. A link a user or `named` could have made (a home directory
 component on HestiaCP, a link in a `named`-writable zone directory) drops that path with a
-warning. This closes planted links, not a race in a directory a user can write while enrol or
-`fix-acls` runs.
+warning.
+
+**The race between the plan and setfacl** (security review A-3, residual). A user who can write a
+directory on a planned path could still swap a component for a link after the plan and before
+`setfacl` follows it. So the plan also notes, for every path it keeps, the object the path reaches
+(device, inode, owner, type), found by walking from `/` with `openat(O_PATH|O_NOFOLLOW)` one
+component at a time (`O_DIRECTORY` for all but the last), which follows no link at all. When enrol
+or `fix-acls` sets the ACL, it resolves the path again, walks it the same way, and refuses the path
+unless it reaches that same object with the expected type (a directory or a regular file, never a
+link); a file with more than one hard link in a directory a user other than root can change is
+refused too. `setfacl` then gets the open descriptor as `/proc/self/fd/N` (passed to the child),
+which names the opened object whatever happens to the path, and `fix-acls` reads the current ACL
+through the same descriptor. A refused path is an error: enrol stops (someone is racing it), and
+`fix-acls` reports it and carries on with the others. Lab test (HestiaCP 1.10.9, Debian 12): with
+a user swapping a home directory component for a link in a loop, 0.1.4's `fix-acls` granted the
+agent read access on the link's target in 55 of 400 runs, this version in none.
 
 **`$INCLUDE` in zone files** (found by the CI ACL test). The plan follows `$INCLUDE` in every
 text-format zone file, recursively up to 8 levels (the parser's limit), resolving relative names
@@ -256,8 +336,18 @@ from the root watcher (D-30) instead of by inheritance. `fix-acls` also removes,
 `setfacl -n` (no mask recalculation, so no other entry widens), the agent's default entry that an
 older version left on such a directory, and any agent entry on key files in planned directories
 and on the key-only includes the plan skips. The plan warns about a key file others can read: no
-ACL takes away what the mode gives everyone. Not covered: a DNSSEC `key-directory` that is not a
-zone directory is not planned at all; a key created in a zone-only directory inherits the entry
+ACL takes away what the mode gives everyone.
+
+**DNSSEC key directories.** The plan reads every `key-directory` in named.conf (in `options`, any
+view and any zone, whichever view is read; relative ones against named's `directory`, inside the
+chroot). Such a folder never gets `rx` or a default ACL: when zone files live in it too it is a
+zone directory without the default (above); otherwise it is left out of the zone directories even
+when a zone `$INCLUDE`s a public `K*.key` from it (that file is still readable, and the folder gets
+`x` only if the agent must pass through it). Key files in it are stripped of any agent entry, and
+`fix-acls` removes the agent's default entry from the folder, and its access entry unless the
+agent must pass through. Not covered: keys kept in named's working directory, the default when no
+`key-directory` is set, are found only by name, as in any zone directory; a `key-store` directory
+(BIND 9.20 `dnssec-policy`) is not read. A key created in a zone-only directory inherits the entry
 until the watcher's next run strips it (named writes `K*.private` 0600, so that entry is masked).
 
 **Inline keys are refused** (owner decision, 2026-11-20; it replaced a warning). A `key` (or
@@ -386,13 +476,16 @@ GoReleaser (nfpm) builds `.deb` and `.rpm` for amd64 and arm64. Each installs `/
 0640 `root:paneldns-agent`, kept on upgrade), `/var/lib/paneldns-agent` (0700) and the licence
 files. The packages recommend `acl` (for `setfacl`), and the `.rpm` depends on `shadow-utils`.
 The maintainer scripts only create the system user and group, fix the two modes, run
-`systemctl daemon-reload`, restart the unit on upgrade if it is enabled, and stop and disable it
-on removal. They never enable it on a first install (enrol does that), and they make no network
-call. `dpkg --purge` removes the state directory and leaves the user. File times come from the
+`paneldns-agent update-units` on an enrolled server (D-21) and `systemctl daemon-reload`, restart
+the unit on upgrade if it is enabled, and stop and disable it, and delete the drop-ins enrol
+wrote, on removal. They never enable it on a first install (enrol does that) and download
+nothing and make no network call (`update-units --offline` resolves no names and keeps the
+addresses the drop-in already allows). `dpkg --purge` removes the state directory and leaves the user. File times come from the
 commit, so packages and tarballs are reproducible. The package maintainer field is
-`HostingSimple` until the owner names a contact address. `packaging/gpg.key` is a **placeholder**:
-GitHub has no public copy of the key, and the release job refuses to run until the owner commits
-the real public key.
+`HostingSimple` until the owner names a contact address. `packaging/gpg.key` is the public half of
+the release signing key (ed25519, fingerprint `AAE3B3B1258CAAB0ED1AE1C3697D46A632CB9283`,
+"PanelDNS Packages"), the same file the repository serves at `https://packages.paneldns.com/gpg.key`;
+the private key is never in this repository (SECURITY.md, "Release signing").
 
 ## D-30 The root ACL watcher (7.9)
 
@@ -465,3 +558,18 @@ waits for the next change in a watched directory (or a manual `fix-acls`); the a
 zone as unreadable meanwhile. A zone in a brand-new directory isn't watched until `fix-acls` runs
 by hand. Watching named.conf's directory (`/etc`) means unrelated writes there start runs; each
 re-reads named.conf and the zone files for `$INCLUDE`.
+
+## D-31 System programs by absolute path (7.9)
+
+**Finding** (security review A-13). Enrol and `fix-acls` run as root and started `named -V`,
+`setfacl` and `systemctl` by `$PATH` lookup, so whoever set the caller's `PATH` (or could write a
+directory early in it) chose the binary root ran. The agent looked up `named-compilezone` the same
+way.
+
+**Decision.** Every program the agent starts (`named`, `named-compilezone`, `setfacl`,
+`systemctl`) is found in a fixed list of system directories, in this order: `/usr/sbin`,
+`/usr/bin`, `/sbin`, `/bin`, `/usr/local/sbin`, `/usr/local/bin` (`internal/syspath`). `$PATH` is
+never read. A candidate must be a regular executable file owned by root and not writable by group
+or others, in a directory with the same property; one that fails is skipped and named in the "not
+found" error. `/usr/local` comes last because some BIND builds install there. The agent's own
+re-execution as the agent user (`--check` from enrol) uses `os.Executable()`, already absolute.

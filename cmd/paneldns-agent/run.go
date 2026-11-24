@@ -113,7 +113,7 @@ func loadAgent(configPath, stateDir string, log *slog.Logger) (*agent, error) {
 
 var errNotEnrolled = errors.New("this server is not enrolled: run paneldns-agent enrol --url URL --code CODE as root")
 
-func (a *agent) engine() *engine.Engine {
+func (a *agent) engine(keyPending bool) *engine.Engine {
 	e := engine.New(engine.Config{
 		Interval:  time.Duration(a.cfg.Interval) * time.Second,
 		Resync:    time.Duration(a.cfg.Resync) * time.Second,
@@ -122,41 +122,11 @@ func (a *agent) engine() *engine.Engine {
 		Host:      engine.Host{Hostname: host.Hostname(), OS: host.OS(), Panel: host.Panel(), PublicIPs: host.PublicIPs},
 		// Spec 8.2: a missing state file means the server must issue a
 		// new epoch and get a full inventory.
-		NeedEpoch: !a.seq.Exists() || !a.stExists,
+		NeedEpoch:  !a.seq.Exists() || !a.stExists,
+		KeyPending: keyPending,
 	}, a.src, a.client, a.owners, a.st, a.log)
 	e.Rotate = a.rotate
 	return e
-}
-
-// rotate replaces the key pair (spec 8.1 routine rotation): write the new
-// key to agent.key.next, register it with /rotate signed by the old key,
-// then rename it into place. A crash in between leaves the old key
-// working; the server asks again.
-func (a *agent) rotate(ctx context.Context) error {
-	next := filepath.Join(a.stateDir, state.NextKeyFile)
-	key, err := state.GenerateKey(nil)
-	if err != nil {
-		return err
-	}
-	if err := state.WriteKey(next, key); err != nil {
-		return err
-	}
-	resp, err := a.client.Rotate(ctx, key.Public().(ed25519.PublicKey))
-	if err != nil {
-		os.Remove(next)
-		return err
-	}
-	if err := os.Rename(next, filepath.Join(a.stateDir, state.KeyFile)); err != nil {
-		return err
-	}
-	a.id.KeyID = string(resp.KeyID)
-	if err := a.id.Save(filepath.Join(a.stateDir, state.IdentityFile)); err != nil {
-		return err
-	}
-	a.key = key
-	a.client.SetKey(key, a.id.SourceID, a.id.KeyID)
-	a.log.Info("key rotated", "key_id", a.id.KeyID)
-	return nil
 }
 
 func cmdRun(args []string, stderr io.Writer) int {
@@ -171,12 +141,18 @@ func cmdRun(args []string, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "paneldns-agent:", err)
 		return 1
 	}
-	os.Remove(filepath.Join(*stateDir, state.NextKeyFile)) // an interrupted rotation
+	// An interrupted rotation: finish its commit, or keep both keys until
+	// PanelDNS shows which one it holds (review A-15).
+	keyPending, err := a.recoverRotation()
+	if err != nil {
+		fmt.Fprintln(stderr, "paneldns-agent: key rotation:", err)
+		return 1
+	}
 	a.log.Info("starting", "version", version.Version, "source", a.src.Kind(), "url", a.cfg.URL,
 		"source_id", a.id.SourceID, "interval", a.cfg.Interval, "resync", a.cfg.Resync)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	if err := a.engine().Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+	if err := a.engine(keyPending).Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		a.log.Error("stopped", "err", err)
 		return 1
 	}

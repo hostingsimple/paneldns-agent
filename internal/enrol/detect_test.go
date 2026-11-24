@@ -157,32 +157,45 @@ func TestDetectSourceNamedNotRunningNotesTheChoice(t *testing.T) {
 	}
 }
 
-// PowerDNS reads a bare boolean key ("api") as on; enrol used to read it as
-// unset and report the API off.
+// pdns.conf is read as PowerDNS reads it (arguments.cc): a bare boolean key
+// ("api") is on, only "no" and "off" are off, and a "#" after white space
+// starts a comment. Values PowerDNS reads as on that look meant as off are
+// refused, and the refusal says whether api was missing or off.
 func TestDetectSourcePowerDNSAPISwitch(t *testing.T) {
 	const rest = "api-key=plainkey\nwebserver-port=8081\n"
 	tests := []struct {
 		name, apiLine string
-		on            bool
+		want          string // "" = on; else part of the error
 	}{
-		{"bare api", "api\n", true},
-		{"bare api with spaces", "  api  \n", true},
-		{"api=yes", "api=yes\n", true},
-		{"api = yes with spaces", "api = yes\n", true},
-		{"api=no", "api=no\n", false},
-		{"api=false", "api=false\n", false},
-		{"api=off", "api=off\n", false},
-		{"commented # api", "# api\n", false},
-		{"commented #api=yes", "#api=yes\n", false},
-		{"absent", "", false},
+		{"bare api", "api\n", ""},
+		{"bare api with spaces", "  api  \n", ""},
+		{"api=yes", "api=yes\n", ""},
+		{"api = yes with spaces", "api = yes\n", ""},
+		{"api=YES", "api=YES\n", ""},
+		{"api=true", "api=true\n", ""},
+		{"api=1", "api=1\n", ""},
+		{"trailing comment", "api=yes  # on\n", ""},
+		{"trailing comment after a tab", "api=yes\t# on\n", ""},
+		{"bare api, trailing comment", "api # enable\n", ""},
+		{"continued line", "api=\\\nyes\n", ""},
+		{"api=no", "api=no\n", "HTTP API is off (api=no)"},
+		{"api=off", "api=off\n", "HTTP API is off (api=off)"},
+		{"api=no, trailing comment", "api=no # disabled\n", "HTTP API is off (api=no)"},
+		{"hash in the value is not a comment", "api=no#x\n", "api=no#x, which PowerDNS reads as on"},
+		{"api=false", "api=false\n", "api=false, which PowerDNS reads as on"},
+		{"api=0", "api=0\n", "api=0, which PowerDNS reads as on"},
+		{"api=No", "api=No\n", "api=No, which PowerDNS reads as on"},
+		{"commented # api", "# api\n", "doesn't set api"},
+		{"commented #api=yes", "#api=yes\n", "doesn't set api"},
+		{"absent", "", "doesn't set api"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			withRoot(t, map[string]string{"/etc/powerdns/pdns.conf": tt.apiLine + rest})
 			d, err := DetectSource()
-			if !tt.on {
-				if err == nil || !strings.Contains(err.Error(), "HTTP API is off") {
-					t.Fatalf("want the API reported off, got %v (%+v)", err, d)
+			if tt.want != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.want) {
+					t.Fatalf("want an error with %q, got %v (%+v)", tt.want, err, d)
 				}
 				return
 			}
@@ -193,6 +206,11 @@ func TestDetectSourcePowerDNSAPISwitch(t *testing.T) {
 				t.Fatalf("got %+v", d)
 			}
 		})
+	}
+	// Comments after other values too.
+	withRoot(t, map[string]string{"/etc/powerdns/pdns.conf": "api=yes\napi-key=plainkey # the key\nwebserver-address=127.0.0.1 # loopback\n"})
+	if d, err := DetectSource(); err != nil || d.PDNSAPIKey != "plainkey" || d.PDNSAPIURL != "http://127.0.0.1:8081" {
+		t.Fatalf("got %+v %v", d, err)
 	}
 }
 

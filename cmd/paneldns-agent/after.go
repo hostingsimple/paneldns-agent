@@ -1,27 +1,21 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"io"
-	"net/netip"
-	"net/url"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 
 	"github.com/hostingsimple/paneldns-agent/internal/config"
 	"github.com/hostingsimple/paneldns-agent/internal/enrol"
-	"github.com/hostingsimple/paneldns-agent/internal/state"
 )
 
-// DropInPath is the unit drop-in enrol writes when the agent needs a
-// loopback address (spec 7.9: IPAddressAllow= only for the PowerDNS API,
-// plus a loopback resolver; docs/DECISIONS.md D-21).
+// DropInPath is the unit drop-in enrol writes when the agent needs an
+// address in a range the unit denies (spec 7.9: IPAddressAllow= for the
+// PowerDNS API, plus resolvers; docs/DECISIONS.md D-21).
 const DropInPath = "/etc/systemd/system/paneldns-agent.service.d/10-paneldns-network.conf"
 
 type afterOptions struct {
@@ -69,12 +63,10 @@ func afterEnrol(o afterOptions) func(context.Context, config.Config, enrol.Detec
 			}
 		}
 
-		allow := networkAllow(cfg)
-		if err := writeDropIn(allow); err != nil {
+		// The agent unit's drop-ins: the addresses in denied ranges it needs,
+		// and home directories readable when zone data lives there.
+		if _, err := syncAgentUnits(agentDropIns(networkAllow(cfg), planHome(plan)), o.out); err != nil {
 			return err
-		}
-		if len(allow) > 0 {
-			fmt.Fprintf(o.out, "Unit drop-in %s allows %s\n", DropInPath, strings.Join(allow, " "))
 		}
 		// The root ACL watcher's drop-ins: written even with --no-acl or
 		// --no-start, so enabling it later needs only systemctl.
@@ -125,69 +117,10 @@ func afterEnrol(o afterOptions) func(context.Context, config.Config, enrol.Detec
 }
 
 func systemctl(out io.Writer, args ...string) error {
-	b, err := exec.Command("systemctl", args...).CombinedOutput()
+	b, err := runSystemctl(args...)
 	if err != nil {
 		out.Write(b)
 		return fmt.Errorf("systemctl %s: %w", strings.Join(args, " "), err)
 	}
 	return nil
-}
-
-// networkAllow lists the loopback addresses the unit must allow: the
-// PowerDNS API host, and nameservers in /etc/resolv.conf on loopback
-// (systemd-resolved's 127.0.0.53, or a local named), because
-// IPAddressDeny=localhost would otherwise stop name resolution.
-func networkAllow(cfg config.Config) []string {
-	seen := map[string]bool{}
-	var out []string
-	add := func(a netip.Addr) {
-		if a.IsLoopback() && !seen[a.String()] {
-			seen[a.String()] = true
-			out = append(out, a.String())
-		}
-	}
-	if cfg.ZoneSource == config.SourcePowerDNSAPI {
-		if u, err := url.Parse(cfg.PDNSAPIURL); err == nil {
-			h := u.Hostname()
-			if h == "localhost" {
-				h = "127.0.0.1"
-			}
-			if a, err := netip.ParseAddr(h); err == nil {
-				add(a)
-			}
-		}
-	}
-	if f, err := os.Open(enrol.Root + "/etc/resolv.conf"); err == nil {
-		defer f.Close()
-		sc := bufio.NewScanner(f)
-		for sc.Scan() {
-			fields := strings.Fields(sc.Text())
-			if len(fields) >= 2 && fields[0] == "nameserver" {
-				if a, err := netip.ParseAddr(fields[1]); err == nil {
-					add(a)
-				}
-			}
-		}
-	}
-	return out
-}
-
-func writeDropIn(allow []string) error {
-	if runtime.GOOS != "linux" {
-		return nil
-	}
-	if len(allow) == 0 {
-		err := os.Remove(DropInPath)
-		if err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(DropInPath), 0o755); err != nil {
-		return err
-	}
-	text := "# Written by paneldns-agent enrol; re-running enrol rewrites it.\n" +
-		"# Loopback addresses the agent needs: the PowerDNS API and/or a local resolver.\n" +
-		"[Service]\nIPAddressAllow=" + strings.Join(allow, " ") + "\n"
-	return state.WriteAtomic(DropInPath, []byte(text), 0o644)
 }

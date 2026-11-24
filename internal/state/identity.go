@@ -14,6 +14,10 @@ type Identity struct {
 	ClusterName string `json:"cluster_name,omitempty"`
 	SourceName  string `json:"source_name,omitempty"`
 	EnrolledAt  int64  `json:"enrolled_at"`
+	// NextKeyID is set while a confirmed rotation is being committed: the
+	// server holds agent.key.next under this key id. A start that finds it
+	// finishes the commit (cmd/paneldns-agent rotate.go).
+	NextKeyID string `json:"next_key_id,omitempty"`
 }
 
 // LoadIdentity reads identity.json.

@@ -164,7 +164,7 @@ func TestFixNeverTouchesKeyFiles(t *testing.T) {
 		}{mode: m}
 	}
 	var ran [][]string
-	res := FixACLs(plan, FixOptions{UID: agentUID, Stat: f.stat, Read: f.read, Run: func(a []string) error { ran = append(ran, a); return nil }})
+	res := FixACLs(plan, FixOptions{UID: agentUID, open: openPlain, Stat: f.stat, Read: f.read, Run: func(a []string) error { ran = append(ran, a); return nil }})
 	touched := map[string]bool{}
 	for _, c := range ran {
 		touched[c[len(c)-1]] = true
@@ -181,7 +181,7 @@ func TestFixNeverTouchesKeyFiles(t *testing.T) {
 func TestFixACLsErrorsAndMissing(t *testing.T) {
 	plan := &ACLPlan{Read: []string{"/var/named/a.db", "/var/named/b.db", "/var/named/gone.db"}}
 	f := fakeFS{"/var/named/a.db": {mode: 0o600}, "/var/named/b.db": {mode: 0o600}}
-	res := FixACLs(plan, FixOptions{UID: agentUID, Stat: f.stat, Read: f.read, Run: func(a []string) error {
+	res := FixACLs(plan, FixOptions{UID: agentUID, open: openPlain, Stat: f.stat, Read: f.read, Run: func(a []string) error {
 		if a[len(a)-1] == "/var/named/a.db" {
 			return errors.New("setfacl: Read-only file system")
 		}
@@ -190,7 +190,7 @@ func TestFixACLsErrorsAndMissing(t *testing.T) {
 	if !reflect.DeepEqual(res.Fixed, []string{"/var/named/b.db"}) || len(res.Errors) != 1 || res.Missing != 1 {
 		t.Fatalf("%+v", res)
 	}
-	readErr := FixACLs(plan, FixOptions{UID: agentUID, Stat: f.stat, Read: func(string) (*ACL, *ACL, error) {
+	readErr := FixACLs(plan, FixOptions{UID: agentUID, open: openPlain, Stat: f.stat, Read: func(string) (*ACL, *ACL, error) {
 		return nil, nil, errors.New("boom")
 	}, Run: func([]string) error { t.Fatal("ran setfacl after a read error"); return nil }})
 	if len(readErr.Errors) != 2 || !strings.Contains(readErr.Errors[0].Error(), "reading ACL") {
@@ -231,6 +231,16 @@ func TestFixCommandsKeyDirectories(t *testing.T) {
 		{name: "key file a plan also names for reading: stripped, not granted", kind: "strip+read", mode: 0o640,
 			access: &ACL{UserObj: 6, GroupObj: 4, Mask: 4, HasMask: true, Users: map[uint32]Perm{agentUID: 4}},
 			want:   []string{"setfacl -n -x u:990"}},
+		{name: "key-directory: the agent's entries removed", kind: "keydir", mode: dir | 0o750, access: dirOK,
+			def:  &ACL{UserObj: 7, GroupObj: 5, Mask: 5, HasMask: true, Users: map[uint32]Perm{agentUID: 4}},
+			want: []string{"setfacl -n -x u:990", "setfacl -n -d -x u:990"}},
+		{name: "key-directory without agent entries: nothing granted", kind: "keydir", mode: dir | 0o750, wantFine: 1},
+		{name: "traversed key-directory: x kept, default removed", kind: "keydir+traverse", mode: dir | 0o750,
+			access: &ACL{UserObj: 7, GroupObj: 5, Mask: 5, HasMask: true, Users: map[uint32]Perm{agentUID: 1}},
+			def:    &ACL{UserObj: 7, GroupObj: 5, Mask: 5, HasMask: true, Users: map[uint32]Perm{agentUID: 4}},
+			want:   []string{"setfacl -n -d -x u:990"}},
+		{name: "zone directory that is the key-directory: rx, no default", kind: "keydir+zonedir", mode: dir | 0o750,
+			want: []string{"setfacl -m u:990:r-x,m::r-x"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -243,6 +253,12 @@ func TestFixCommandsKeyDirectories(t *testing.T) {
 				plan.Strip = []string{p}
 			case "strip+read":
 				plan.Strip, plan.Read = []string{p}, []string{p}
+			case "keydir":
+				plan.KeyDirs = []string{p}
+			case "keydir+traverse":
+				plan.KeyDirs, plan.Traverse = []string{p}, []string{p}
+			case "keydir+zonedir":
+				plan.KeyDirs, plan.Dirs, plan.NoDefault = []string{p}, []string{p}, []string{p}
 			}
 			f := fakeFS{p: {tt.mode, tt.access, tt.def}}
 			cmds, res := FixCommands(plan, FixOptions{UID: agentUID, Stat: f.stat, Read: f.read})
