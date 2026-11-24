@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -148,5 +149,27 @@ func TestPlanHome(t *testing.T) {
 	}
 	if planHome(nil) {
 		t.Error("nil plan")
+	}
+}
+
+// The package's upgrade step resolves no names (spec 7.1) and never takes
+// an allowance away.
+func TestNetworkAllowOffline(t *testing.T) {
+	withUnits(t)
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "etc"), 0o755)
+	os.WriteFile(filepath.Join(dir, "etc", "resolv.conf"), []byte("nameserver 10.0.20.253\n"), 0o644)
+	enrol.Root = filepath.ToSlash(dir)
+	defer func() { enrol.Root = "" }()
+	os.MkdirAll(filepath.Dir(agentNetDropIn), 0o755)
+	os.WriteFile(agentNetDropIn, []byte("[Service]\nIPAddressAllow=127.0.0.53 192.168.1.5 203.0.113.9\n"), 0o644)
+	keepAllowed = true
+	defer func() { keepAllowed = false }()
+	cfg := config.Defaults()
+	cfg.URL = "https://paneldns.lan.example"
+	lookupHost = func(string) ([]netip.Addr, error) { return nil, errors.New("offline") }
+	got := networkAllow(cfg)
+	if want := []string{"10.0.20.253", "127.0.0.53", "192.168.1.5"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("allow %v, want %v", got, want)
 	}
 }

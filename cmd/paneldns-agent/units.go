@@ -58,6 +58,11 @@ func denied(a netip.Addr) bool {
 	return false
 }
 
+// keepAllowed (update-units --offline) keeps every address the installed
+// network drop-in allows that is still in a denied range, so a run without
+// name lookups never takes an allowance away.
+var keepAllowed bool
+
 // lookupHost resolves the PanelDNS host name for the drop-in (root, outside
 // the unit's sandbox); replaced in tests.
 var lookupHost = func(host string) ([]netip.Addr, error) {
@@ -100,6 +105,19 @@ func networkAllow(cfg config.Config) []string {
 			if len(fields) >= 2 && fields[0] == "nameserver" {
 				if a, err := netip.ParseAddr(fields[1]); err == nil {
 					add(a)
+				}
+			}
+		}
+	}
+	if keepAllowed {
+		if b, err := os.ReadFile(agentNetDropIn); err == nil {
+			for _, line := range strings.Split(string(b), "\n") {
+				if v, ok := strings.CutPrefix(strings.TrimSpace(line), "IPAddressAllow="); ok {
+					for _, f := range strings.Fields(v) {
+						if a, err := netip.ParseAddr(f); err == nil {
+							add(a)
+						}
+					}
 				}
 			}
 		}
@@ -197,6 +215,7 @@ func cmdUpdateUnits(args []string, stdout, stderr io.Writer) int {
 	configPath := fset.String("config", config.DefaultPath, "config file")
 	stateDir := fset.String("state-dir", config.StateDir, "state directory")
 	quiet := fset.Bool("if-enrolled", false, "do nothing, successfully, on a server that is not enrolled (the package's upgrade step)")
+	offline := fset.Bool("offline", false, "don't resolve the PanelDNS host name; keep the addresses the drop-in already allows (the package's upgrade step: no network in maintainer scripts, spec 7.1)")
 	if fset.Parse(args) != nil {
 		return 2
 	}
@@ -211,6 +230,10 @@ func cmdUpdateUnits(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintln(stderr, "paneldns-agent update-units:", err)
 		return 1
+	}
+	if *offline {
+		lookupHost = func(string) ([]netip.Addr, error) { return nil, errors.New("offline") }
+		keepAllowed = true
 	}
 	if err := updateUnits(cfg, nil, stdout, true); err != nil {
 		fmt.Fprintln(stderr, "paneldns-agent update-units:", err)

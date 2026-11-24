@@ -4,8 +4,8 @@
 # agent and --check expect, rewrites an enrolled server's unit drop-ins
 # (update-units), reloads systemd, and restarts the agent and the ACL watcher
 # if they are enabled (an upgrade). It never enables or starts a unit on a
-# first install: `paneldns-agent enrol` does that. It downloads nothing
-# (spec 7.1); update-units only resolves the PanelDNS host name.
+# first install: `paneldns-agent enrol` does that. No network access
+# (spec 7.1): update-units runs --offline.
 set -e
 
 # deb calls this with "configure" (and others such as "abort-upgrade");
@@ -24,10 +24,10 @@ fi
 if [ -d /run/systemd/system ]; then
 	# An upgrade: rewrite this server's drop-ins before the restart, so the
 	# new unit (which may deny more, such as private address ranges or
-	# /home) gets the exceptions this server needs. Local files only; the
-	# PanelDNS host name is looked up through the system resolver.
+	# /home) gets the exceptions this server needs. Local files only
+	# (--offline: no name lookup; addresses already allowed are kept).
 	if [ -f /var/lib/paneldns-agent/identity.json ]; then
-		/usr/bin/paneldns-agent update-units --if-enrolled >/dev/null 2>&1 ||
+		/usr/bin/paneldns-agent update-units --if-enrolled --offline >/dev/null 2>&1 ||
 			echo "paneldns-agent: update-units failed; run it by hand as root" >&2
 	fi
 	systemctl daemon-reload >/dev/null 2>&1 || true

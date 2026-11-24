@@ -264,7 +264,8 @@ linked into `/home`). The ACL watcher's drop-in uses the same rule. The other su
 
 **Keeping the drop-ins current.** `paneldns-agent update-units` (root) rewrites both drop-ins, and
 the ACL watcher's, from the config and the ACL plan. The package runs it on upgrade, on an
-enrolled server, before restarting the agent, so an upgrade that denies more can't cut off a
+enrolled server, before restarting the agent, with `--offline` (no network in maintainer scripts,
+spec 7.1: PanelDNS's name is not resolved and every address the drop-in already allows is kept), so an upgrade that denies more can't cut off a
 server enrolled with an older version (its LAN resolver, or HestiaCP zones). `fix-acls` run by
 hand does the same. `--check`, which runs outside the unit, compares the drop-ins with what
 `update-units` would write and warns when they differ.
@@ -478,7 +479,8 @@ The maintainer scripts only create the system user and group, fix the two modes,
 `paneldns-agent update-units` on an enrolled server (D-21) and `systemctl daemon-reload`, restart
 the unit on upgrade if it is enabled, and stop and disable it, and delete the drop-ins enrol
 wrote, on removal. They never enable it on a first install (enrol does that) and download
-nothing; `update-units` only resolves the PanelDNS host name. `dpkg --purge` removes the state directory and leaves the user. File times come from the
+nothing and make no network call (`update-units --offline` resolves no names and keeps the
+addresses the drop-in already allows). `dpkg --purge` removes the state directory and leaves the user. File times come from the
 commit, so packages and tarballs are reproducible. The package maintainer field is
 `HostingSimple` until the owner names a contact address. `packaging/gpg.key` is the public half of
 the release signing key (ed25519, fingerprint `AAE3B3B1258CAAB0ED1AE1C3697D46A632CB9283`,
