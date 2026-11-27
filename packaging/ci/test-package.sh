@@ -28,6 +28,18 @@ case "$kind" in
 		;;
 	*) fail "kind must be deb or rpm" ;;
 esac
+
+# D-32: acl is a dependency. The native tool refuses the package without it, which is the
+# point; first prove that, then install acl from the distribution as apt/dnf would.
+echo "== refused without acl"
+if ! command -v setfacl >/dev/null 2>&1; then
+	if install >/dev/null 2>&1; then fail "installed without its acl dependency"; fi
+	[ "$kind" = deb ] && dpkg -r paneldns-agent >/dev/null 2>&1 || true
+fi
+case "$kind" in
+	deb) apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends acl >/dev/null ;;
+	rpm) command -v setfacl >/dev/null 2>&1 || dnf install -y -q acl >/dev/null ;;
+esac
 echo "== installing $pkg"
 install
 
