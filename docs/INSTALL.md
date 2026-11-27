@@ -54,6 +54,27 @@ command line.
 different fingerprint, and can enrol in one go. Download it, read it, then run it as root; never
 pipe it into a shell.
 
+## PowerDNS servers (CyberPanel)
+
+On a server whose DNS is PowerDNS without a BIND backend (CyberPanel, or PowerDNS with a database
+backend), the agent lists and reads zones through PowerDNS's HTTP API on the loopback address.
+PowerDNS ships with the API off, and so does CyberPanel. Before enrol, add these lines to
+`pdns.conf` (`/etc/pdns/pdns.conf` on CyberPanel) and restart PowerDNS:
+
+```
+api=yes
+api-key=<a long random key>
+webserver-address=127.0.0.1
+webserver-port=8081
+webserver-allow-from=127.0.0.1,::1
+```
+
+Enrol copies the key into the agent's state directory (readable only by the agent). If the API
+refuses a zone (CyberPanel stores TXT records without quotes, which PowerDNS 5's API rejects with
+HTTP 500), the agent reads that zone by AXFR from `127.0.0.1` instead. PowerDNS allows AXFR from
+loopback by default; keep `allow-axfr-ips` including `127.0.0.1` if you change it, and keep `dig`
+installed (`bind-utils` or `dnsutils`).
+
 ## The ACL watcher
 
 The agent runs as the unprivileged `paneldns-agent` user and reads zone files through the POSIX

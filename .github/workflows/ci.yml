@@ -180,6 +180,7 @@ jobs:
       - name: the installed systemd unit verifies
         run: |
           set -eu
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends acl
           sudo dpkg -i dist/paneldns-agent_*_amd64.deb
           systemd-analyze verify /usr/lib/systemd/system/paneldns-agent.service \
             /usr/lib/systemd/system/paneldns-agent-acl.path /usr/lib/systemd/system/paneldns-agent-acl.service

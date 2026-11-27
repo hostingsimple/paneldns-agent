@@ -573,3 +573,35 @@ never read. A candidate must be a regular executable file owned by root and not 
 or others, in a directory with the same property; one that fails is skipped and named in the "not
 found" error. `/usr/local` comes last because some BIND builds install there. The agent's own
 re-execution as the agent user (`--check` from enrol) uses `os.Executable()`, already absolute.
+
+## D-32 acl is a hard dependency (7.1)
+
+**Finding** (lab check 2026-11-28, ISPConfig 3.3.3p2 on Debian 12). The packages listed `acl` as a
+recommendation. `apt install` and `dnf install` add recommendations by default, but a server with
+recommendations turned off, or an install by `dpkg -i`, has no `setfacl`: enrol's ACL step,
+`fix-acls` and the ACL watcher fail, and every zone file the panel writes without world read
+(ISPConfig writes `0640 root:bind`) is unreadable by the agent. Virtualmin hid it by writing zone
+files `0644`.
+
+**Decision.** `acl` is a dependency of both packages (`dependencies` in the GoReleaser nfpm config: deb `Depends`, rpm
+`Requires`). It is a small base-system package on every supported distribution.
+
+## D-33 PowerDNS zones by AXFR when the API refuses them (7.3)
+
+**Finding** (lab check 2026-11-28, CyberPanel 3.0 build 10 with PowerDNS 5.0.7 and the gmysql
+backend). CyberPanel stores TXT content without quotes. PowerDNS 5's HTTP API parses stored content
+and refuses the whole zone (`/export` and the zone JSON answer HTTP 500 "Data field in DNS should
+start with quote"), so every zone with an SPF record was unreadable, while PowerDNS's DNS side
+still answered the same records correctly. Stock CyberPanel also has the API off.
+
+**Decision.** Zones are still listed through the API. When the API answers 500 or 404 for a listed
+zone's export, the agent reads that zone by AXFR from the local PowerDNS with `dig` (found like
+every program, D-31) at `127.0.0.1` (PowerDNS's default `allow-axfr-ips` includes loopback, and
+the unit's `IPAddressAllow` for the API address covers it), drops the closing SOA and parses it
+like an export. A transfer that is refused fails the zone with both errors. A zone name starting
+with `-`, `+` or `@` is never passed to `dig`. Enrol's message for a PowerDNS without the API now
+lists the exact `pdns.conf` lines to add.
+
+**Residual risk.** A server that restricts `allow-axfr-ips` to other addresses gets the refusal
+error for those zones. AXFR returns what PowerDNS serves, which for these zones is the intended
+data; it is used only after the API refused the zone.

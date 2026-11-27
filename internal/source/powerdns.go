@@ -1,6 +1,7 @@
 package source
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hostingsimple/paneldns-agent/internal/syspath"
 	"github.com/hostingsimple/paneldns-agent/internal/zonefile"
 )
 
@@ -31,9 +33,23 @@ type PowerDNS struct {
 	// PowerDNS's (listener.go); nil checks /proc/net/tcp. Tests replace it.
 	CheckListener func(base string) error
 
+	// AXFR fallback (DECISIONS D-33): when the API refuses a zone's export,
+	// the zone is read by AXFR from the local PowerDNS instead. AXFRAddr is
+	// the address asked (default 127.0.0.1; PowerDNS allows AXFR from
+	// loopback by default), Dig the dig binary (default: the system
+	// directories, never $PATH), NoAXFR turns the fallback off, and Run
+	// replaces the command runner in tests.
+	AXFRAddr string
+	Dig      string
+	NoAXFR   bool
+	Run      func(ctx context.Context, argv []string) (stdout, stderr []byte, err error)
+
 	mu  sync.Mutex
 	key string
 }
+
+// AXFRTimeout bounds one AXFR read.
+const AXFRTimeout = 2 * time.Minute
 
 // MaxExportSize caps one zone export.
 const MaxExportSize = 32 << 20
@@ -193,6 +209,18 @@ func normalize(n string) string {
 func (p *PowerDNS) Read(ctx context.Context, ref ZoneRef) ([]zonefile.RR, error) {
 	resp, body, err := p.get(ctx, "/api/v1/servers/"+url.PathEscape(p.serverID())+"/zones/"+url.PathEscape(ref.key)+"/export", MaxExportSize)
 	if err != nil {
+		// D-33: PowerDNS 5's API refuses a whole zone when one record's stored
+		// content doesn't parse (CyberPanel stores TXT without quotes: HTTP
+		// 500 "Data field in DNS should start with quote"), while its DNS side
+		// still serves it. A listed zone the API answers 500 or 404 for is read
+		// by AXFR from the local PowerDNS instead.
+		if resp != nil && (resp.StatusCode == http.StatusInternalServerError || resp.StatusCode == http.StatusNotFound) && !p.NoAXFR {
+			rrs, aerr := p.readAXFR(ctx, ref)
+			if aerr == nil {
+				return rrs, nil
+			}
+			return nil, fmt.Errorf("%v; AXFR fallback: %v", err, aerr)
+		}
 		return nil, err
 	}
 	text := body
@@ -206,6 +234,58 @@ func (p *PowerDNS) Read(ctx context.Context, ref ZoneRef) ([]zonefile.RR, error)
 		text = []byte(wrapped.Zone)
 	}
 	return zonefile.Parse(text, zonefile.Options{Origin: ref.Name, File: ref.Name + " (PowerDNS export)"})
+}
+
+// readAXFR reads ref by AXFR from the local PowerDNS through dig (D-33).
+func (p *PowerDNS) readAXFR(ctx context.Context, ref ZoneRef) ([]zonefile.RR, error) {
+	// The zone name is a positional argument of dig: one starting with "-",
+	// "+" or "@" would be read as an option or a server.
+	if ref.Name == "" || strings.ContainsAny(ref.Name[:1], "-+@") || strings.ContainsAny(ref.Name, " \t\n") {
+		return nil, fmt.Errorf("zone name %q can't be passed to dig; not read", ref.Name)
+	}
+	bin := p.Dig
+	if bin == "" {
+		found, err := syspath.Find("dig")
+		if err != nil {
+			return nil, fmt.Errorf("dig not found (install bind-utils or dnsutils): %w", err)
+		}
+		bin = found
+	}
+	addr := p.AXFRAddr
+	if addr == "" {
+		addr = "127.0.0.1"
+	}
+	argv := []string{bin, "+nocmd", "+nocomments", "+nostats", "+noquestion", "+time=10", "+tries=1", "@" + addr, strings.TrimSuffix(ref.Name, ".") + ".", "AXFR"}
+	ctx, cancel := context.WithTimeout(ctx, AXFRTimeout)
+	defer cancel()
+	run := p.Run
+	if run == nil {
+		run = runCapped
+	}
+	stdout, stderr, err := run(ctx, argv)
+	if err != nil {
+		msg := strings.TrimSpace(string(stderr))
+		if len(msg) > 500 {
+			msg = msg[:500]
+		}
+		return nil, fmt.Errorf("dig AXFR: %v: %s", err, msg)
+	}
+	// dig reports a refused or failed transfer on stdout and exits 0.
+	if bytes.Contains(stdout, []byte("; Transfer failed")) || bytes.Contains(stdout, []byte("; communications error")) {
+		return nil, fmt.Errorf("AXFR of %s from %s refused or failed (PowerDNS allow-axfr-ips must include %s)", ref.Name, addr, addr)
+	}
+	rrs, err := zonefile.Parse(stdout, zonefile.Options{Origin: ref.Name, File: ref.Name + " (AXFR from " + addr + ")"})
+	if err != nil {
+		return nil, err
+	}
+	// An AXFR starts and ends with the SOA; keep one.
+	if n := len(rrs); n >= 2 && rrs[0].Type == "SOA" && rrs[n-1].Type == "SOA" {
+		rrs = rrs[:n-1]
+	}
+	if len(rrs) == 0 || rrs[0].Type != "SOA" {
+		return nil, fmt.Errorf("AXFR of %s returned no SOA", ref.Name)
+	}
+	return rrs, nil
 }
 
 // Running implements Source: the API answering means PowerDNS runs.

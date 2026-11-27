@@ -76,8 +76,11 @@ nfpms:
     formats: [deb, rpm]
     bindir: /usr/bin
     mtime: "{{ .CommitDate }}"
-    # setfacl, used by `paneldns-agent enrol` to grant read access.
-    recommends:
+    # setfacl, used by `paneldns-agent enrol`, `fix-acls` and the ACL watcher to grant
+    # read access. A hard dependency (D-32): as a recommendation it was skipped on servers
+    # with recommends off and by `dpkg -i`, and the agent then could not read zone files a
+    # panel writes 0640 root:bind (ISPConfig), with no error until `--check`.
+    dependencies:
       - acl
     contents:
       - src: packaging/systemd/paneldns-agent.service
