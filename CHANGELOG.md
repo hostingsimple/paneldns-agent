@@ -6,6 +6,21 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **CyberPanel zones can be read.** CyberPanel stores TXT records without quotes, and PowerDNS 5's
+  HTTP API then refuses the whole zone (HTTP 500), so no zone with an SPF record could be synced.
+  When the API refuses a listed zone, the agent now reads it by AXFR from the local PowerDNS with
+  `dig` (D-33). Found on a CyberPanel 3.0 lab server.
+- **`acl` is now a dependency of the packages** instead of a recommendation, so a server that
+  doesn't install recommendations still gets `setfacl` and the agent can read zone files a panel
+  writes without world read (ISPConfig) (D-32).
+
+### Changed
+
+- Enrol's message for a PowerDNS without its HTTP API (CyberPanel's default) lists the `pdns.conf`
+  lines to add.
+
 ## [0.1.5] - 2026-11-24
 
 Security review 2026-11, the remaining agent findings.

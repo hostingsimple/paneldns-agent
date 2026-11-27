@@ -255,7 +255,11 @@ func TestPowerDNS(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	p := &PowerDNS{BaseURL: srv.URL, KeyFile: keyFile, CheckListener: noListenerCheck}
+	// The missing zone below answers 404; its AXFR fallback must not reach a real dig.
+	p := &PowerDNS{BaseURL: srv.URL, KeyFile: keyFile, CheckListener: noListenerCheck, Dig: "/usr/bin/dig",
+		Run: func(ctx context.Context, a []string) ([]byte, []byte, error) {
+			return []byte("; Transfer failed.\n"), nil, nil
+		}}
 	ctx := context.Background()
 	l, err := p.List(ctx)
 	if err != nil {

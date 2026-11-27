@@ -83,9 +83,9 @@ func DetectSource() (Detected, error) {
 		v, set := pdns["api"]
 		switch {
 		case !set:
-			return d, fmt.Errorf("found %s but it doesn't set api, so the PowerDNS HTTP API is off (its default); set api=yes with an api-key, or use BIND", pdnsFile)
+			return d, fmt.Errorf("found %s but it doesn't set api, so the PowerDNS HTTP API is off (its default, and CyberPanel's); %s", pdnsFile, apiHowTo)
 		case pdnsBool(v) == pdnsOff:
-			return d, fmt.Errorf("found %s but its HTTP API is off (api=%s); set api=yes with an api-key, or use BIND", pdnsFile, v)
+			return d, fmt.Errorf("found %s but its HTTP API is off (api=%s); %s", pdnsFile, v, apiHowTo)
 		case pdnsBool(v) == pdnsUnclear:
 			return d, fmt.Errorf("found %s with api=%s, which PowerDNS reads as on (only no and off turn it off) but looks meant as off; write api=yes to use the API with the agent, or api=no", pdnsFile, v)
 		}
@@ -116,6 +116,12 @@ func DetectSource() (Detected, error) {
 	}
 	return d, fmt.Errorf("no named.conf (%s) and no pdns.conf found; set ZONE_SOURCE and ZONES_FILE in %s by hand", strings.Join(namedConfs, ", "), config.DefaultPath)
 }
+
+// apiHowTo is what enrol tells an admin whose PowerDNS has no HTTP API (D-33).
+// The agent only reads through it, from loopback.
+const apiHowTo = "add these lines to pdns.conf and restart PowerDNS, then run enrol again: " +
+	"api=yes, api-key=<a long random key>, webserver-address=127.0.0.1, webserver-port=8081, " +
+	"webserver-allow-from=127.0.0.1,::1"
 
 // A pdns.conf boolean as enrol reads it.
 const (
