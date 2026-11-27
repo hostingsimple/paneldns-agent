@@ -6,6 +6,10 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-11-27
+
+Lab check of the agent on HestiaCP, Virtualmin, ISPConfig and CyberPanel (2026-11-27).
+
 ### Fixed
 
 - **CyberPanel zones can be read.** CyberPanel stores TXT records without quotes, and PowerDNS 5's
