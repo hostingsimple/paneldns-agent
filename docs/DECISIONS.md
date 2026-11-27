@@ -583,7 +583,7 @@ recommendations turned off, or an install by `dpkg -i`, has no `setfacl`: enrol'
 (ISPConfig writes `0640 root:bind`) is unreadable by the agent. Virtualmin hid it by writing zone
 files `0644`.
 
-**Decision.** `acl` is a dependency of both packages (`depends` in nfpm: deb `Depends`, rpm
+**Decision.** `acl` is a dependency of both packages (`dependencies` in the GoReleaser nfpm config: deb `Depends`, rpm
 `Requires`). It is a small base-system package on every supported distribution.
 
 ## D-33 PowerDNS zones by AXFR when the API refuses them (7.3)

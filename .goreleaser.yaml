@@ -80,7 +80,7 @@ nfpms:
     # read access. A hard dependency (D-32): as a recommendation it was skipped on servers
     # with recommends off and by `dpkg -i`, and the agent then could not read zone files a
     # panel writes 0640 root:bind (ISPConfig), with no error until `--check`.
-    depends:
+    dependencies:
       - acl
     contents:
       - src: packaging/systemd/paneldns-agent.service
