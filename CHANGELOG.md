@@ -6,6 +6,8 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-11-28
+
 ### Added
 
 - **Self-check reports reach PanelDNS.** `paneldns-agent --check --upload` sends the `--check`
