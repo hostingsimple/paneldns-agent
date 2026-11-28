@@ -625,3 +625,22 @@ directory the agent user owns, and only for regular files with one link that roo
 can't start is an error, never a silent root run.
 
 **Residual risk.** None known: the re-run has less privilege than the caller.
+
+## D-35 Self-check reports uploaded to PanelDNS (7.7)
+
+**Why.** Support for a hosting company's server needed the `--check` report, which meant asking
+the company to log in, run it and paste the output. The spec left uploading it for Phase 2.
+
+**Decision.** `paneldns-agent --check --upload` sends the `--check --json` report to `POST
+/check-report` after printing it. A `--zone` dump is never sent (`--upload` with `--zone` is
+refused), and a report over 256 KB isn't sent. "Request a self-check" in PanelDNS sets
+`check_requested` in the heartbeat answers; the service then runs the same checks itself after the
+cycle (as the service's user, in its sandbox, so it reports exactly the service's access) and uploads
+them with `trigger: "requested"`, at most once every 10 minutes however often PanelDNS asks. The
+check's own heartbeat carries `check: true`, so it changes nothing on the server (P-11). PanelDNS
+clears the request when a report arrives, or after an hour.
+
+**Residual risk.** The report holds what `--check` prints: paths, zone names of the first five
+zones, the hostname, addresses and error messages. It goes only to the PanelDNS the server is
+enrolled with, which already receives every zone; PanelDNS keeps the checks only.
+

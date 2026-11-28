@@ -166,7 +166,7 @@ Answer (every field optional):
 {"config": {"interval": 60, "resync": 21600, "exclude": ["*.test.example.com"]},
  "latest_version": "1.1.0", "minimum_version": "1.0.0", "minimum_grace_until": 1796000000,
  "resync": false, "resync_names": ["example.com"], "rotate_key": false,
- "cluster_name": "Brand A", "source_name": "web1"}
+ "check_requested": false, "cluster_name": "Brand A", "source_name": "web1"}
 ```
 
 - `config` is the overlay of spec 7.2. `interval` (seconds, used only if ≥ 15) and `resync`
@@ -178,6 +178,9 @@ Answer (every field optional):
 - `resync_names` → those zones are re-read and pushed in full on the next cycle, even if
   unchanged.
 - `rotate_key: true` → section 4.3 after this cycle.
+- `check_requested: true` → after this cycle the service runs the same checks as `--check` and
+  sends the report to section 4.8, at most once every 10 minutes (D-35). Agents before 0.1.8
+  ignore it.
 
 ### 4.5 `POST /api/agent/v1/inventory`
 
@@ -254,6 +257,20 @@ At most 1,000 names per request:
 acknowledged content for it and it is gone from a complete listing (not merely excluded, not
 failing to read). The answer may carry `{"results": [{"name": …, "status": "deleted"}]}`; the
 agent treats any 2xx as acknowledging every name in the request. [P-18]
+
+### 4.8 `POST /api/agent/v1/check-report`
+
+The `--check --json` report, sent by `paneldns-agent --check --upload` (`trigger: "manual"`) or by
+the service after `check_requested` (`trigger: "requested"`). Signed like every other request.
+
+```json
+{"trigger": "manual", "report": {"version": "0.1.8", "checks": [
+  {"section": "config", "status": "ok", "message": "config parsed"}]}}
+```
+
+`report` is at most 256 KB of JSON and never carries a `--zone` dump (`--upload` and `--zone`
+can't be combined). The answer is `{"report_id": 12}`; PanelDNS keeps only each check's section,
+status and message (D-35).
 
 ## 5. Canonical zone text and content hash (spec 7.4, 8.7)
 

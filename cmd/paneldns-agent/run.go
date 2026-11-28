@@ -25,17 +25,18 @@ import (
 
 // agent is everything a running agent needs, shared by run and --check.
 type agent struct {
-	cfg      config.Config
-	stateDir string
-	id       *state.Identity
-	key      ed25519.PrivateKey
-	seq      *state.Sequence
-	st       *state.State
-	stExists bool
-	src      source.Source
-	client   *protocol.Client
-	owners   engine.Owners
-	log      *slog.Logger
+	cfg        config.Config
+	configPath string
+	stateDir   string
+	id         *state.Identity
+	key        ed25519.PrivateKey
+	seq        *state.Sequence
+	st         *state.State
+	stExists   bool
+	src        source.Source
+	client     *protocol.Client
+	owners     engine.Owners
+	log        *slog.Logger
 }
 
 func newLogger(level string, w io.Writer) *slog.Logger {
@@ -77,7 +78,7 @@ func loadAgent(configPath, stateDir string, log *slog.Logger) (*agent, error) {
 	for _, w := range cfg.Warnings {
 		log.Warn("config", "file", configPath, "warning", w)
 	}
-	a := &agent{cfg: cfg, stateDir: stateDir, log: log}
+	a := &agent{cfg: cfg, configPath: configPath, stateDir: stateDir, log: log}
 	p := func(n string) string { return filepath.Join(stateDir, n) }
 	a.id, err = state.LoadIdentity(p(state.IdentityFile))
 	if err != nil {
@@ -126,6 +127,7 @@ func (a *agent) engine(keyPending bool) *engine.Engine {
 		KeyPending: keyPending,
 	}, a.src, a.client, a.owners, a.st, a.log)
 	e.Rotate = a.rotate
+	e.CheckRequested = requestedCheck(a.log, a.configPath, a.stateDir)
 	return e
 }
 

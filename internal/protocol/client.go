@@ -256,6 +256,12 @@ func (c *Client) Heartbeat(ctx context.Context, r *HeartbeatRequest) (*Heartbeat
 	return out, c.do(ctx, PathHeartbeat, true, fixed(r), out)
 }
 
+// CheckReport uploads a --check report (D-35).
+func (c *Client) CheckReport(ctx context.Context, r *CheckReportRequest) (*CheckReportResponse, error) {
+	out := &CheckReportResponse{}
+	return out, c.do(ctx, PathCheckReport, true, fixed(r), out)
+}
+
 // Inventory implements engine.API.
 func (c *Client) Inventory(ctx context.Context, r *InventoryRequest) (*InventoryResponse, error) {
 	out := &InventoryResponse{}

@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,7 +42,12 @@ func cmdCheck(args []string, stdout, stderr io.Writer) int {
 	stateDir := fs.String("state-dir", config.StateDir, "state directory")
 	zone := fs.String("zone", "", "print the canonical text and hash of one zone")
 	asJSON := fs.Bool("json", false, "write the report as JSON")
+	upload := fs.Bool("upload", false, "also send the report to PanelDNS (shown on the server's page)")
 	if fs.Parse(args) != nil {
+		return 2
+	}
+	if *upload && *zone != "" {
+		fmt.Fprintln(stderr, "--upload can't be used with --zone: a zone's text is never uploaded")
 		return 2
 	}
 	// AGENT-CHECK-ROOT-01 (D-34): as root, --check re-runs itself as the
@@ -71,10 +78,53 @@ func cmdCheck(args []string, stdout, stderr io.Writer) int {
 	} else {
 		res.WriteText(stdout)
 	}
+	code := 0
 	if res.Failed() {
-		return 1
+		code = 1
 	}
-	return 0
+	if *upload {
+		if err := uploadCheck(ctx, env, res, protocol.CheckTriggerManual); err != nil {
+			fmt.Fprintln(stderr, "upload:", err)
+			return 1
+		}
+		fmt.Fprintln(stderr, "The report was sent to PanelDNS: it shows on this server's page under Self-check.")
+	}
+	return code
+}
+
+// uploadCheck sends a --check report to PanelDNS (D-35). A --zone dump is
+// never part of it.
+func uploadCheck(ctx context.Context, env check.Env, res *check.Result, trigger string) error {
+	if env.Upload == nil {
+		return errors.New("this server is not enrolled (or its key can't be read), so there is nowhere to send the report")
+	}
+	sent := *res
+	sent.Zone = nil
+	raw, err := json.Marshal(&sent)
+	if err != nil {
+		return err
+	}
+	if len(raw) > protocol.MaxCheckReportBytes {
+		return fmt.Errorf("the report is %d bytes, over the %d-byte limit", len(raw), protocol.MaxCheckReportBytes)
+	}
+	_, err = env.Upload(ctx, &protocol.CheckReportRequest{Trigger: trigger, Report: raw})
+	return err
+}
+
+// requestedCheck is the service's answer to check_requested (D-35): the
+// same checks as --check, run by the service itself, and uploaded.
+func requestedCheck(log *slog.Logger, configPath, stateDir string) func(ctx context.Context) {
+	return func(ctx context.Context) {
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel()
+		env := buildCheckEnv(configPath, stateDir)
+		res := check.Run(ctx, env)
+		if err := uploadCheck(ctx, env, res, protocol.CheckTriggerRequested); err != nil {
+			log.Warn("requested self-check: upload failed", "err", err)
+			return
+		}
+		log.Info("requested self-check sent to PanelDNS", "failed", res.Failed())
+	}
 }
 
 // buildCheckEnv loads each piece on its own, so one missing piece is a
@@ -137,5 +187,6 @@ func buildCheckEnv(configPath, stateDir string) check.Env {
 	client.SetKey(key, env.Identity.SourceID, env.Identity.KeyID)
 	env.Heartbeat = client.Heartbeat
 	env.ServerDate = client.ServerDate
+	env.Upload = client.CheckReport
 	return env
 }
