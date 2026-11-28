@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -19,6 +20,20 @@ import (
 	"github.com/hostingsimple/paneldns-agent/internal/state"
 )
 
+// checkAsAgent re-runs this binary's --check as the agent user (a seam
+// for tests).
+var checkAsAgent = func(stdout, stderr io.Writer, args []string) (int, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return 0, err
+	}
+	fmt.Fprintf(stderr, "running --check as %s, the service's user\n", enrol.User)
+	return execAsAgent(stdout, stderr, self, append([]string{"--check"}, args...)...)
+}
+
+// repairState is repairCheckState (a seam for tests).
+var repairState = repairCheckState
+
 func cmdCheck(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("--check", stderr)
 	configPath := fs.String("config", config.DefaultPath, "config file")
@@ -27,6 +42,24 @@ func cmdCheck(args []string, stdout, stderr io.Writer) int {
 	asJSON := fs.Bool("json", false, "write the report as JSON")
 	if fs.Parse(args) != nil {
 		return 2
+	}
+	// AGENT-CHECK-ROOT-01 (D-34): as root, --check re-runs itself as the
+	// agent user. A root run would leave sequence.json (and its lock)
+	// owned by root, and the service could then no longer sign a request;
+	// it would also read files the service can't.
+	if geteuid() == 0 {
+		if err := repairState(*stateDir, stderr); err != nil {
+			fmt.Fprintln(stderr, "warning:", err)
+		}
+		code, err := checkAsAgent(stdout, stderr, args)
+		if err == nil {
+			return code
+		}
+		if !errors.Is(err, errNoAgentUser) {
+			fmt.Fprintf(stderr, "error: running --check as %s: %v\n", enrol.User, err)
+			return 1
+		}
+		fmt.Fprintf(stderr, "warning: user %s not found, so --check runs as root and can't show the service's access\n", enrol.User)
 	}
 	env := buildCheckEnv(*configPath, *stateDir)
 	env.Zone = *zone

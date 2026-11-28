@@ -65,6 +65,18 @@ if /usr/bin/paneldns-agent --check > /tmp/check.txt 2>&1; then
 	fail "--check passed on a server that is not enrolled"
 fi
 grep -q "not enrolled" /tmp/check.txt || { cat /tmp/check.txt; fail "--check output"; }
+grep -q "running --check as paneldns-agent" /tmp/check.txt || { cat /tmp/check.txt; fail "--check as root did not re-run as paneldns-agent"; }
+
+echo "== --check as root gives back state files an older root --check left owned by root (t105)"
+echo '{"epoch":1,"seq":1}' > /var/lib/paneldns-agent/sequence.json
+: > /var/lib/paneldns-agent/.lock
+chmod 600 /var/lib/paneldns-agent/sequence.json /var/lib/paneldns-agent/.lock
+/usr/bin/paneldns-agent --check > /tmp/check.txt 2>&1 || true
+for f in sequence.json .lock; do
+	[ "$(stat -c %U /var/lib/paneldns-agent/$f)" = paneldns-agent ] 		|| { cat /tmp/check.txt; fail "$f still owned by $(stat -c %U /var/lib/paneldns-agent/$f)"; }
+done
+grep -q "gave /var/lib/paneldns-agent/sequence.json back" /tmp/check.txt || { cat /tmp/check.txt; fail "repair not reported"; }
+rm -f /var/lib/paneldns-agent/sequence.json /var/lib/paneldns-agent/.lock
 
 echo "== reinstall keeps an edited config"
 sed -i 's/^INTERVAL=60 /INTERVAL=120 /' /etc/paneldns-agent.conf

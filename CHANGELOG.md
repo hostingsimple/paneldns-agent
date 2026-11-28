@@ -6,6 +6,15 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **`--check` run as root no longer stops the service from syncing.** A root `--check` (for
+  example `sudo paneldns-agent --check`) took a sequence number and left `sequence.json` and its
+  lock owned by root, so the service could no longer sign a request and stopped pushing until the
+  files were given back by hand. Run as root, `--check` now re-runs itself as `paneldns-agent`,
+  which also means it shows exactly the service's access; it first gives back those two files if
+  an earlier root run left them owned by root (D-34). Found in the PanelDNS b10 load test.
+
 ## [0.1.6] - 2026-11-27
 
 Lab check of the agent on HestiaCP, Virtualmin, ISPConfig and CyberPanel (2026-11-27).

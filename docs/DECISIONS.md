@@ -605,3 +605,23 @@ lists the exact `pdns.conf` lines to add.
 **Residual risk.** A server that restricts `allow-axfr-ips` to other addresses gets the refusal
 error for those zones. AXFR returns what PowerDNS serves, which for these zones is the intended
 data; it is used only after the API refused the zone.
+
+## D-34 `--check` as root runs as the agent user (7.7)
+
+**Finding** (PanelDNS b10 load test, 2026-11-27). `--check` takes a sequence number (D-24). Run as
+root, it wrote `sequence.json` and `.lock` as root, mode 0600, and the service, running as
+`paneldns-agent`, could then no longer take a number: every push failed until the files were
+given back with `chown`. Enrol was not affected, because it already runs `--check` as the agent
+user.
+
+**Decision.** When `--check` runs as root, it re-runs itself as `paneldns-agent` with the same
+arguments, a fixed `PATH` and no inherited environment (as enrol's self-check does), streams its
+output and returns its exit status. A root run therefore never writes state, and it reports the
+service's own access rather than root's. Before re-running, it gives `sequence.json` and `.lock`
+back to the agent user when an older root run left them owned by root, but only inside a state
+directory the agent user owns, and only for regular files with one link that root owns, because
+`--state-dir` is whatever the admin typed. The directory itself is never changed. If the
+`paneldns-agent` user doesn't exist, `--check` warns and runs as root as before; a re-run that
+can't start is an error, never a silent root run.
+
+**Residual risk.** None known: the re-run has less privilege than the caller.
