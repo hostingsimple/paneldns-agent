@@ -6,6 +6,8 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-11-28
+
 ### Fixed
 
 - **`--check` run as root no longer stops the service from syncing.** A root `--check` (for
