@@ -130,6 +130,8 @@ type Env struct {
 	Sequence   *state.Sequence
 	Source     source.Source
 	Owners     *owners.File
+	// Upload sends the report to PanelDNS (D-35); nil when not enrolled.
+	Upload func(ctx context.Context, r *protocol.CheckReportRequest) (*protocol.CheckReportResponse, error)
 	// Heartbeat sends the --check heartbeat; nil skips the network checks.
 	Heartbeat  func(ctx context.Context, r *protocol.HeartbeatRequest) (*protocol.HeartbeatResponse, error)
 	ServerDate func() (server, local time.Time)

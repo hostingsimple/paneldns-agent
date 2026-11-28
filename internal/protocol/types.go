@@ -24,6 +24,8 @@ const (
 	PathInventory = BasePath + "/inventory"
 	PathZones     = BasePath + "/zones"
 	PathDeletions = BasePath + "/deletions"
+	// PathCheckReport takes a --check report (D-35).
+	PathCheckReport = BasePath + "/check-report"
 )
 
 // Limits the agent applies before sending (spec 7.5, 8.5).
@@ -157,6 +159,29 @@ type HeartbeatResponse struct {
 	RotateKey         bool     `json:"rotate_key,omitempty"`
 	ClusterName       string   `json:"cluster_name,omitempty"`
 	SourceName        string   `json:"source_name,omitempty"`
+	// CheckRequested asks the service to run --check and upload the
+	// report (D-35).
+	CheckRequested bool `json:"check_requested,omitempty"`
+}
+
+// Check report triggers (D-35).
+const (
+	CheckTriggerManual    = "manual"    // paneldns-agent --check --upload
+	CheckTriggerRequested = "requested" // the service, after check_requested
+)
+
+// MaxCheckReportBytes bounds an uploaded report (uncompressed JSON).
+const MaxCheckReportBytes = 256 << 10
+
+// CheckReportRequest is POST /check-report: the --check --json report.
+type CheckReportRequest struct {
+	Trigger string          `json:"trigger"`
+	Report  json.RawMessage `json:"report"`
+}
+
+// CheckReportResponse answers /check-report.
+type CheckReportResponse struct {
+	ReportID int64 `json:"report_id"`
 }
 
 // InventoryEntry is one name in an inventory. Hash is empty for an

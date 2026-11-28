@@ -81,6 +81,9 @@ type Engine struct {
 	// may have stopped working.
 	Now    func() time.Time
 	Rotate func(ctx context.Context) error
+	// CheckRequested is called after a cycle when a heartbeat answer asked
+	// for a self-check (D-35), at most once every CheckRequestInterval.
+	CheckRequested func(ctx context.Context)
 
 	st         *state.State
 	overlay    protocol.Overlay
@@ -101,7 +104,14 @@ type Engine struct {
 	nextAttempt time.Time
 	lastErr     error
 	lastHB      *protocol.HeartbeatResponse
+
+	checkDue     bool
+	lastCheckRun time.Time
 }
+
+// CheckRequestInterval is the shortest time between two requested
+// self-checks: a server that keeps asking gets one every 10 minutes.
+const CheckRequestInterval = 10 * time.Minute
 
 type prepared struct {
 	hash   string
@@ -768,6 +778,9 @@ func (e *Engine) heartbeat(ctx context.Context, check bool) error {
 	if resp.RotateKey {
 		e.rotate = true
 	}
+	if resp.CheckRequested {
+		e.checkDue = true
+	}
 	if resp.MinimumVersion != "" && version.Less(version.Version, resp.MinimumVersion) {
 		e.log.Warn("this agent is below PanelDNS's minimum supported version; update the package",
 			"version", version.Version, "minimum", resp.MinimumVersion, "grace_until", time.Unix(resp.MinimumGraceUntil, 0).UTC().Format(time.RFC3339))
@@ -775,6 +788,20 @@ func (e *Engine) heartbeat(ctx context.Context, check bool) error {
 		e.log.Info("a newer agent version is available", "version", version.Version, "latest", resp.LatestVersion)
 	}
 	return nil
+}
+
+// RunRequestedCheck runs the self-check a heartbeat answer asked for, if
+// one is due and the last one is at least CheckRequestInterval old.
+func (e *Engine) RunRequestedCheck(ctx context.Context) {
+	if !e.checkDue || e.CheckRequested == nil {
+		return
+	}
+	e.checkDue = false
+	if !e.lastCheckRun.IsZero() && e.Now().Sub(e.lastCheckRun) < CheckRequestInterval {
+		return
+	}
+	e.lastCheckRun = e.Now()
+	e.CheckRequested(ctx)
 }
 
 // Run scans every interval and runs a cycle after each scan, or sooner
@@ -791,6 +818,7 @@ func (e *Engine) Run(ctx context.Context) error {
 			nextScan = e.Now().Add(e.interval())
 		}
 		e.Cycle(ctx)
+		e.RunRequestedCheck(ctx)
 		wake := nextScan
 		if !e.nextAttempt.IsZero() && e.nextAttempt.Before(wake) {
 			wake = e.nextAttempt

@@ -294,3 +294,24 @@ func TestReplayFields(t *testing.T) {
 		t.Fatal("garbage signature accepted")
 	}
 }
+
+// TestCheckReport: the report goes signed to /check-report with its trigger
+// and the report as sent (D-35).
+func TestCheckReport(t *testing.T) {
+	var got CheckReportRequest
+	c, _, _ := newTestClient(t, func(w http.ResponseWriter, path string, body []byte, _ uint64) {
+		if path != PathCheckReport {
+			t.Errorf("path %s", path)
+		}
+		json.Unmarshal(body, &got)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"report_id":12}`))
+	})
+	resp, err := c.CheckReport(context.Background(), &CheckReportRequest{Trigger: CheckTriggerManual, Report: json.RawMessage(`{"version":"0.1.8","checks":[]}`)})
+	if err != nil || resp.ReportID != 12 {
+		t.Fatalf("resp %+v %v", resp, err)
+	}
+	if got.Trigger != "manual" || string(got.Report) != `{"version":"0.1.8","checks":[]}` {
+		t.Fatalf("sent %+v %s", got, got.Report)
+	}
+}

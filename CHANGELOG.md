@@ -6,6 +6,15 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Self-check reports reach PanelDNS.** `paneldns-agent --check --upload` sends the `--check`
+  report to PanelDNS, where it shows on the server's page under **Self-check** and can be
+  downloaded for a support ticket. **Request a self-check** on that page asks the running agent for
+  one through the next heartbeat, so nobody needs to log in to the server; the service answers at
+  most once every 10 minutes. A zone's text (`--zone`) is never uploaded (D-35). Needs PanelDNS
+  3.136.0 or later; an older PanelDNS answers 404 to the upload.
+
 ## [0.1.7] - 2026-11-28
 
 ### Fixed

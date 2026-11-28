@@ -40,7 +40,8 @@ Signed `.deb` and `.rpm` packages come from `https://packages.paneldns.com`; see
    PanelDNS reachability, certificate, key, IP allowlist, clock skew and version. It exits 1 on
    any failure. `--check --zone example.com` prints one zone's canonical text and hash;
    `--json` gives the report as JSON. Run as root, it re-runs itself as `paneldns-agent`, so it
-   shows the service's own access.
+   shows the service's own access. `--upload` also sends the report to PanelDNS (the server's
+   page, **Self-check**), where **Request a self-check** asks the running service for one.
 
 ## What it reads
 
