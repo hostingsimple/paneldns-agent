@@ -39,7 +39,8 @@ Signed `.deb` and `.rpm` packages come from `https://packages.paneldns.com`; see
    view, the first five zones read and hashed, zones the agent can't read, the owner file,
    PanelDNS reachability, certificate, key, IP allowlist, clock skew and version. It exits 1 on
    any failure. `--check --zone example.com` prints one zone's canonical text and hash;
-   `--json` gives the report as JSON.
+   `--json` gives the report as JSON. Run as root, it re-runs itself as `paneldns-agent`, so it
+   shows the service's own access.
 
 ## What it reads
 
